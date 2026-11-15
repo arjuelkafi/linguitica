@@ -83,7 +83,7 @@ export async function syncUserProgressToCloud(
         lastActiveDate: (stats.lastActiveDate || '').slice(0, 20),
         completedLessonsCount: stats.completedLessons.length,
         accuracyRate,
-        currentLevelId: Math.min(5, Math.max(1, stats.currentLevelId)),
+        currentLevelId: Math.min(8, Math.max(1, stats.currentLevelId)),
         completedLessons: completedBounded,
         unlockedLessons: unlockedBounded,
         createdAt: serverTimestamp(),
@@ -102,31 +102,40 @@ export async function syncUserProgressToCloud(
         lastActiveDate: (stats.lastActiveDate || '').slice(0, 20),
         completedLessonsCount: stats.completedLessons.length,
         accuracyRate,
-        currentLevelId: Math.min(5, Math.max(1, stats.currentLevelId)),
+        currentLevelId: Math.min(8, Math.max(1, stats.currentLevelId)),
         completedLessons: completedBounded,
         unlockedLessons: unlockedBounded,
         updatedAt: serverTimestamp(),
       });
     }
 
-    // Also update student progress inside all joined classrooms
+    // Safely update student progress inside each joined classroom; clean up stale refs if removed
     const joinedSnap = await getDocs(collection(db, 'users', currentUid, 'joinedClasses'));
     if (!joinedSnap.empty) {
-      const batch = writeBatch(db);
-      joinedSnap.forEach((joinedDoc) => {
-        const classId = joinedDoc.id;
-        const memberRef = doc(db, 'classrooms', classId, 'members', currentUid);
-        batch.update(memberRef, {
-          studentName: safeName,
-          xp: Math.max(0, stats.xp),
-          streak: Math.max(0, stats.streak),
-          completedLessonsCount: stats.completedLessons.length,
-          accuracyRate,
-          currentLevelId: Math.min(5, Math.max(1, stats.currentLevelId)),
-          updatedAt: serverTimestamp(),
-        });
-      });
-      await batch.commit();
+      await Promise.all(
+        joinedSnap.docs.map(async (joinedDoc) => {
+          const classId = joinedDoc.id;
+          const memberRef = doc(db, 'classrooms', classId, 'members', currentUid);
+          try {
+            const memberSnap = await getDoc(memberRef);
+            if (!memberSnap.exists()) {
+              await deleteDoc(doc(db, 'users', currentUid, 'joinedClasses', classId));
+              return;
+            }
+            await updateDoc(memberRef, {
+              studentName: safeName,
+              xp: Math.max(0, stats.xp),
+              streak: Math.max(0, stats.streak),
+              completedLessonsCount: stats.completedLessons.length,
+              accuracyRate,
+              currentLevelId: Math.min(8, Math.max(1, stats.currentLevelId)),
+              updatedAt: serverTimestamp(),
+            });
+          } catch {
+            // Do not crash user progress sync if a single classroom membership was revoked
+          }
+        })
+      );
     }
 
     return true;
@@ -203,7 +212,7 @@ export async function createClassroomRecord(
         name,
         description,
         ownerId: currentUid,
-        ownerName: user.name.trim().slice(0, 80),
+        ownerName: user.name.trim().slice(0, 80) || 'Guru',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -346,6 +355,16 @@ export async function deleteTeacherClassroom(classCode: string): Promise<void> {
 
   if (currentUid) {
     try {
+      const membersQ = query(
+        collection(db, 'classrooms', code, 'members'),
+        where('ownerId', '==', currentUid)
+      );
+      const membersSnap = await getDocs(membersQ);
+      if (!membersSnap.empty) {
+        const batch = writeBatch(db);
+        membersSnap.forEach((mDoc) => batch.delete(mDoc.ref));
+        await batch.commit();
+      }
       await deleteDoc(doc(db, 'classrooms', code));
       return;
     } catch (error) {
@@ -356,6 +375,9 @@ export async function deleteTeacherClassroom(classCode: string): Promise<void> {
   const localMap = readLocalMap<Classroom>(LOCAL_CLASSROOMS_KEY);
   delete localMap[code];
   writeLocalMap(LOCAL_CLASSROOMS_KEY, localMap);
+  const localMembers = readLocalMap<Record<string, ClassroomMember>>(LOCAL_MEMBERS_KEY);
+  delete localMembers[code];
+  writeLocalMap(LOCAL_MEMBERS_KEY, localMembers);
 }
 
 export async function joinClassroomByCode(
@@ -365,7 +387,7 @@ export async function joinClassroomByCode(
 ): Promise<JoinedClassroom> {
   const code = normalizeClassCode(rawCode);
   if (code.length < 3) {
-    throw new Error('Kode kelas tidak valid.');
+    throw new Error('Kode kelas minimal 3 karakter huruf atau angka.');
   }
 
   const accuracyRate = computeOverallAccuracy(
@@ -393,32 +415,53 @@ export async function joinClassroomByCode(
     const ownerId = String(classData?.ownerId || '');
     const className = String(classData?.name || code);
     const teacherName = String(classData?.ownerName || 'Guru');
+    const safeStudentName = user.name.trim().slice(0, 80) || 'Murid';
+    const clampedLevel = Math.min(8, Math.max(1, stats.currentLevelId));
 
     try {
-      const batch = writeBatch(db);
       const memberRef = doc(db, 'classrooms', code, 'members', currentUid);
-      batch.set(memberRef, {
-        userId: currentUid,
-        ownerId,
-        classId: code,
-        studentName: user.name.trim().slice(0, 80),
-        xp: Math.max(0, stats.xp),
-        streak: Math.max(0, stats.streak),
-        completedLessonsCount: stats.completedLessons.length,
-        accuracyRate,
-        currentLevelId: Math.min(5, Math.max(1, stats.currentLevelId)),
-        joinedAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-
       const joinedRef = doc(db, 'users', currentUid, 'joinedClasses', code);
-      batch.set(joinedRef, {
-        classId: code,
-        userId: currentUid,
-        className,
-        teacherName,
-        joinedAt: serverTimestamp(),
-      });
+      const [memberSnap, joinedSnap] = await Promise.all([
+        getDoc(memberRef),
+        getDoc(joinedRef),
+      ]);
+
+      const batch = writeBatch(db);
+      if (memberSnap.exists()) {
+        batch.update(memberRef, {
+          studentName: safeStudentName,
+          xp: Math.max(0, stats.xp),
+          streak: Math.max(0, stats.streak),
+          completedLessonsCount: stats.completedLessons.length,
+          accuracyRate,
+          currentLevelId: clampedLevel,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        batch.set(memberRef, {
+          userId: currentUid,
+          ownerId,
+          classId: code,
+          studentName: safeStudentName,
+          xp: Math.max(0, stats.xp),
+          streak: Math.max(0, stats.streak),
+          completedLessonsCount: stats.completedLessons.length,
+          accuracyRate,
+          currentLevelId: clampedLevel,
+          joinedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      if (!joinedSnap.exists()) {
+        batch.set(joinedRef, {
+          classId: code,
+          userId: currentUid,
+          className,
+          teacherName,
+          joinedAt: serverTimestamp(),
+        });
+      }
 
       await batch.commit();
     } catch (error) {

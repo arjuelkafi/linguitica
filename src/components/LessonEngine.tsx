@@ -46,14 +46,19 @@ export const LessonEngine: React.FC<LessonEngineProps> = ({
   const [outOfHearts, setOutOfHearts] = useState(false);
 
   const currentQ: Question = lesson.questions[currentIdx];
-  const progressPercent = ((currentIdx) / lesson.questions.length) * 100;
+  const progressPercent = (currentIdx / lesson.questions.length) * 100;
+  const isWordBankQuestion =
+    currentQ.type === 'word_arrangement' ||
+    (currentQ.type === 'translation' &&
+      Boolean(currentQ.options?.length) &&
+      !currentQ.options?.includes(String(currentQ.correctAnswer)));
 
-  // Initialize word arrangement question options
+  // Initialize word bank options for arrangement & word-bank translation questions
   useEffect(() => {
     if (!currentQ) return;
     setIsAnswered(false);
     setSelectedAnswer('');
-    if (currentQ.type === 'word_arrangement') {
+    if (isWordBankQuestion) {
       const words = [...(currentQ.options || [])].sort(() => Math.random() - 0.5);
       setAvailableWords(words);
       setArrangedWords([]);
@@ -62,11 +67,11 @@ export const LessonEngine: React.FC<LessonEngineProps> = ({
       setAvailableWords([]);
     }
 
-    // Auto speak listening and vocabulary questions
+    // Auto speak listening questions
     if (currentQ.type === 'listening' && currentQ.targetText) {
       soundService.speak(currentQ.targetText);
     }
-  }, [currentIdx, currentQ]);
+  }, [currentIdx, currentQ, isWordBankQuestion]);
 
   // Handle checking the user's answer
   const handleCheck = () => {
@@ -104,7 +109,12 @@ export const LessonEngine: React.FC<LessonEngineProps> = ({
       const isPerfect = mistakesCount === 0;
       const bonusXp = isPerfect ? 5 : 0;
       const totalEarnedXp = lesson.xpReward + bonusXp;
-      recordLessonCompleted(lesson.id, totalEarnedXp, isPerfect);
+      recordLessonCompleted(
+        lesson.id,
+        totalEarnedXp,
+        isPerfect,
+        Boolean(lesson.isCheckpoint)
+      );
       setShowSummary(true);
     }
   };
@@ -129,7 +139,7 @@ export const LessonEngine: React.FC<LessonEngineProps> = ({
   // Can the check button be pressed?
   const canCheck = () => {
     if (isAnswered) return true;
-    if (currentQ.type === 'word_arrangement') {
+    if (isWordBankQuestion) {
       return arrangedWords.length > 0;
     }
     return selectedAnswer.length > 0;
@@ -271,8 +281,8 @@ export const LessonEngine: React.FC<LessonEngineProps> = ({
           </div>
         </div>
 
-        {/* Speech/Audio Button if listening or targetText available */}
-        {currentQ.targetText && (
+        {/* Speech/Audio Button (hide translation targetText until after checking answer!) */}
+        {currentQ.targetText && (currentQ.type !== 'translation' || isAnswered) && (
           <div className="mb-6 flex items-center gap-3 p-4 bg-slate-50 border-2 border-slate-200 rounded-2xl">
             <button
               onClick={() => currentQ.targetText && soundService.speak(currentQ.targetText)}
@@ -292,8 +302,8 @@ export const LessonEngine: React.FC<LessonEngineProps> = ({
           </div>
         )}
 
-        {/* Exercise Type 1: Word Arrangement */}
-        {currentQ.type === 'word_arrangement' && (
+        {/* Exercise Type 1: Word Arrangement & Word-Bank Translation */}
+        {isWordBankQuestion && (
           <div className="space-y-4">
             {/* Sentence Construction Zone */}
             <div className="min-h-18 p-3 rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 flex flex-wrap gap-2 items-center">
@@ -330,8 +340,8 @@ export const LessonEngine: React.FC<LessonEngineProps> = ({
           </div>
         )}
 
-        {/* Exercise Type 2: Multiple Choice / Translation / Listening / Fill blank */}
-        {currentQ.type !== 'word_arrangement' && (
+        {/* Exercise Type 2: Multiple Choice / Single-Choice Translation / Listening / Fill blank */}
+        {!isWordBankQuestion && (
           <div className="grid grid-cols-1 gap-3">
             {currentQ.options?.map((option, idx) => {
               const isSelected = selectedAnswer === option;

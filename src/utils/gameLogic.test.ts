@@ -15,6 +15,8 @@ import {
   HEART_RECOVERY_SECONDS,
 } from './gameLogic';
 
+import { LEARNING_LEVELS } from '../data/curriculum';
+
 test('getUserLevelInfo computes level and progress correctly', () => {
   assert.deepEqual(getUserLevelInfo(0), {
     level: 1,
@@ -72,6 +74,14 @@ test('checkQuestionAnswer validates multiple choice, translation, and word arran
   );
   assert.equal(
     checkQuestionAnswer(
+      { type: 'translation', correctAnswer: 'Hello, how are you?' },
+      '',
+      ['Hello,', 'how', 'are', 'you?']
+    ),
+    true
+  );
+  assert.equal(
+    checkQuestionAnswer(
       { type: 'word_arrangement', correctAnswer: ['I', 'am', 'from', 'Indonesia'] },
       '',
       ['I', 'am', 'from', 'Indonesia']
@@ -111,4 +121,61 @@ test('analytics helpers compute accuracy, CEFR estimate, and daily XP history', 
     { date: '2026-11-14', xp: 20 },
     { date: '2026-11-15', xp: 15 },
   ]);
+});
+
+test('all 8 curriculum levels have accurate, unique, and solvable questions', () => {
+  assert.equal(LEARNING_LEVELS.length >= 8, true);
+  const lessonIds = new Set<string>();
+  const questionIds = new Set<string>();
+
+  for (const level of LEARNING_LEVELS) {
+    assert.equal(level.units.length > 0, true);
+    for (const unit of level.units) {
+      assert.equal(unit.lessons.length > 0, true);
+      for (const lesson of unit.lessons) {
+        assert.equal(lessonIds.has(lesson.id), false, `Duplicate lesson id: ${lesson.id}`);
+        lessonIds.add(lesson.id);
+        assert.equal(lesson.questions.length > 0, true);
+
+        for (const q of lesson.questions) {
+          assert.equal(questionIds.has(q.id), false, `Duplicate question id: ${q.id}`);
+          questionIds.add(q.id);
+          assert.equal(q.prompt.trim().length > 0, true, `Empty prompt in ${q.id}`);
+          assert.equal(q.explanation.trim().length > 0, true, `Empty explanation in ${q.id}`);
+
+          if (q.type === 'word_arrangement') {
+            assert.equal(Array.isArray(q.correctAnswer), true, `${q.id} word_arrangement must have array correctAnswer`);
+            const words = q.correctAnswer as string[];
+            const bank = [...(q.options || [])];
+            for (const w of words) {
+              const idx = bank.indexOf(w);
+              assert.notEqual(idx, -1, `${q.id} missing word "${w}" in options`);
+              bank.splice(idx, 1);
+            }
+          } else if (q.type === 'translation') {
+            const target = String(q.correctAnswer);
+            const opts = q.options || [];
+            if (!opts.includes(target)) {
+              const tokens = target.split(' ');
+              const bank = [...opts];
+              for (const t of tokens) {
+                const idx = bank.indexOf(t);
+                assert.notEqual(idx, -1, `${q.id} missing translation token "${t}" in options`);
+                bank.splice(idx, 1);
+              }
+            }
+          } else {
+            const opts = q.options || [];
+            assert.equal(opts.length, 4, `${q.id} should have 4 unique options`);
+            assert.equal(new Set(opts).size, 4, `${q.id} has duplicate options`);
+            assert.equal(
+              opts.includes(String(q.correctAnswer)),
+              true,
+              `${q.id} correctAnswer "${q.correctAnswer}" not in options`
+            );
+          }
+        }
+      }
+    }
+  }
 });

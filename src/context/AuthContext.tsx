@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import {
   onAuthStateChanged,
   signInAnonymously,
@@ -50,7 +50,8 @@ interface AuthContextType {
   recordLessonCompleted: (
     lessonId: string,
     earnedXp: number,
-    isPerfect: boolean
+    isPerfect: boolean,
+    isCheckpoint?: boolean
   ) => { unlockedNewLesson: boolean };
   unlockLevel: (levelId: number) => void;
   consumeHeart: () => boolean;
@@ -250,6 +251,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [authReady, setAuthReady] = useState<boolean>(false);
   const [secondsUntilNextHeart, setSecondsUntilNextHeart] = useState<number>(0);
   const [cloudErrorNotice, setCloudErrorNotice] = useState<string | null>(null);
+  const isManualAuthInProgressRef = useRef<boolean>(false);
 
   const clearPendingJoinCode = useCallback(() => {
     setPendingJoinCode(null);
@@ -266,7 +268,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Listen to Firebase Auth state changes
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (fbUser) => {
-      if (fbUser) {
+      if (fbUser && !isManualAuthInProgressRef.current) {
         try {
           const cloudData = await fetchUserFromCloud(fbUser.uid);
           if (cloudData?.profilePartial && cloudData?.statsPartial) {
@@ -284,6 +286,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               ...prev,
               ...cloudData.statsPartial,
             }));
+            setCloudErrorNotice(null);
+          } else {
+            setUser((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    id: fbUser.uid,
+                    isCloudSynced: true,
+                    authProvider: fbUser.isAnonymous ? 'name' : 'google',
+                  }
+                : {
+                    id: fbUser.uid,
+                    name: fbUser.displayName || fbUser.email?.split('@')[0] || 'Pengguna',
+                    username: getNameSlug(fbUser.displayName || 'learner'),
+                    role: 'student',
+                    avatar: 'globe',
+                    isCloudSynced: true,
+                    authProvider: fbUser.isAnonymous ? 'name' : 'google',
+                    createdAt: new Date().toISOString(),
+                  }
+            );
+            setCloudErrorNotice(null);
           }
         } catch {
           // Ignore initial fetch errors cleanly
@@ -408,81 +432,113 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let nextUid = restoredUser?.id || `user_${slug}_${Date.now()}`;
     let cloudSynced = false;
 
-    // Attempt silent Firebase Anonymous Auth so Name-only users get real Cloud Firestore persistence
+    isManualAuthInProgressRef.current = true;
     try {
-      if (!auth.currentUser) {
-        const cred = await signInAnonymously(auth);
-        nextUid = cred.user.uid;
-        cloudSynced = true;
-        setCloudErrorNotice(null);
-      } else {
-        nextUid = auth.currentUser.uid;
-        cloudSynced = true;
-        setCloudErrorNotice(null);
+      // Attempt silent Firebase Anonymous Auth so Name-only users get real Cloud Firestore persistence
+      try {
+        if (!auth.currentUser) {
+          const cred = await signInAnonymously(auth);
+          nextUid = cred.user.uid;
+          cloudSynced = true;
+          setCloudErrorNotice(null);
+        } else {
+          nextUid = auth.currentUser.uid;
+          cloudSynced = true;
+          setCloudErrorNotice(null);
+        }
+      } catch {
+        cloudSynced = false;
+        setCloudErrorNotice(
+          'Mode lokal aktif. Aktifkan Anonymous Sign-In di Firebase Console atau masuk dengan Google untuk sinkronisasi antar perangkat.'
+        );
       }
-    } catch {
-      cloudSynced = false;
-      setCloudErrorNotice(
-        'Mode lokal aktif. Aktifkan Anonymous Sign-In di Firebase Console atau masuk dengan Google untuk sinkronisasi antar perangkat.'
-      );
-    }
 
-    const nextUser: UserProfile = {
-      id: nextUid,
-      name: cleanName,
-      username: slug,
-      role: restoredUser?.role || role,
-      avatar: 'globe',
-      isCloudSynced: cloudSynced,
-      authProvider: 'name',
-      createdAt: restoredUser?.createdAt || new Date().toISOString(),
-    };
+      const nextUser: UserProfile = {
+        id: nextUid,
+        name: cleanName,
+        username: slug,
+        role: restoredUser?.role || role,
+        avatar: 'globe',
+        isCloudSynced: cloudSynced,
+        authProvider: 'name',
+        createdAt: restoredUser?.createdAt || new Date().toISOString(),
+      };
 
-    setUser(nextUser);
-    setStats(nextStats);
-    if (restoredAchievements) setAchievements(restoredAchievements);
+      setUser(nextUser);
+      setStats(nextStats);
+      if (restoredAchievements) setAchievements(restoredAchievements);
 
-    if (cloudSynced) {
-      await syncCloudSafe(nextUser, nextStats);
+      if (cloudSynced) {
+        await syncCloudSafe(nextUser, nextStats);
+      }
+    } finally {
+      isManualAuthInProgressRef.current = false;
     }
   };
 
   const loginWithGoogle = async (role: UserRole = 'student') => {
-    const cred = await signInWithPopup(auth, googleProvider);
-    const fbUser = cred.user;
-    const displayName = fbUser.displayName || fbUser.email?.split('@')[0] || 'Pengguna';
-    const slug = getNameSlug(displayName);
-
-    let finalStats = stats.xp > 0 ? stats : createDefaultStats();
-    let finalRole = role;
-
+    isManualAuthInProgressRef.current = true;
     try {
-      const cloudData = await fetchUserFromCloud(fbUser.uid);
-      if (cloudData?.statsPartial) {
-        finalStats = { ...finalStats, ...cloudData.statsPartial };
+      const cred = await signInWithPopup(auth, googleProvider);
+      const fbUser = cred.user;
+      const displayName =
+        user?.name && user.authProvider === 'name'
+          ? user.name
+          : fbUser.displayName || fbUser.email?.split('@')[0] || 'Pengguna';
+      const slug = getNameSlug(displayName);
+
+      let finalStats =
+        stats.xp > 0 || stats.completedLessons.length > 0 ? stats : createDefaultStats();
+      let finalRole = user?.role || role;
+
+      try {
+        const cloudData = await fetchUserFromCloud(fbUser.uid);
+        if (cloudData?.statsPartial) {
+          const cloudXp = cloudData.statsPartial.xp || 0;
+          if (cloudXp >= finalStats.xp) {
+            finalStats = { ...finalStats, ...cloudData.statsPartial };
+          }
+        }
+        if (cloudData?.profilePartial?.role) {
+          finalRole = cloudData.profilePartial.role as UserRole;
+        }
+      } catch {
+        // new cloud user
       }
-      if (cloudData?.profilePartial?.role) {
-        finalRole = cloudData.profilePartial.role as UserRole;
+
+      const nextUser: UserProfile = {
+        id: fbUser.uid,
+        name: displayName,
+        username: slug,
+        role: finalRole,
+        avatar: 'globe',
+        isCloudSynced: true,
+        authProvider: 'google',
+        createdAt: user?.createdAt || new Date().toISOString(),
+      };
+
+      setCloudErrorNotice(null);
+      setUser(nextUser);
+      setStats(finalStats);
+      await syncCloudSafe(nextUser, finalStats);
+    } catch (err) {
+      const code = (err as { code?: string })?.code || '';
+      if (code === 'auth/unauthorized-domain') {
+        const host = typeof window !== 'undefined' ? window.location.hostname : 'domain ini';
+        throw new Error(
+          `Domain ${host} belum terdaftar di Firebase Authentication Authorized Domains. Tambahkan domain tersebut di Firebase Console terlebih dahulu.`
+        );
       }
-    } catch {
-      // new cloud user
+      if (code === 'auth/popup-blocked') {
+        throw new Error('Popup login diblokir oleh browser. Izinkan popup lalu coba lagi.');
+      }
+      if (code === 'auth/popup-closed-by-user') {
+        throw new Error('Jendela login Google ditutup sebelum selesai.');
+      }
+      throw new Error('Gagal masuk dengan Google. Coba lagi sebentar.');
+    } finally {
+      isManualAuthInProgressRef.current = false;
     }
-
-    const nextUser: UserProfile = {
-      id: fbUser.uid,
-      name: displayName,
-      username: slug,
-      role: finalRole,
-      avatar: 'globe',
-      isCloudSynced: true,
-      authProvider: 'google',
-      createdAt: new Date().toISOString(),
-    };
-
-    setCloudErrorNotice(null);
-    setUser(nextUser);
-    setStats(finalStats);
-    await syncCloudSafe(nextUser, finalStats);
   };
 
   const logout = async () => {
@@ -534,10 +590,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const consumeHeart = (): boolean => {
-    let stillAlive = true;
+    const stillAlive = stats.hearts - 1 > 0;
     setStats((prev) => {
       const newHearts = Math.max(0, prev.hearts - 1);
-      if (newHearts === 0) stillAlive = false;
       return {
         ...prev,
         hearts: newHearts,
@@ -608,7 +663,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const recordLessonCompleted = (
     lessonId: string,
     earnedXp: number,
-    isPerfect: boolean
+    isPerfect: boolean,
+    isCheckpoint = false
   ): { unlockedNewLesson: boolean } => {
     let unlockedNew = false;
     const today = new Date().toISOString().split('T')[0];
@@ -671,7 +727,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           newProgress = Math.min(100, totalXp);
         } else if (
           ach.id === 'first_checkpoint' &&
-          (lessonId.includes('checkpoint') || lessonId.endsWith('-5') || lessonId.endsWith('-3') || lessonId.endsWith('-2'))
+          (isCheckpoint || lessonId.includes('checkpoint'))
         ) {
           newProgress = 1;
         }

@@ -47,8 +47,12 @@ export const NameLoginCard: React.FC<NameLoginCardProps> = ({
     try {
       await loginWithGoogle(role);
       onSuccess?.();
-    } catch {
-      setError('Masuk dengan Google dibatalkan atau gagal.');
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Masuk dengan Google dibatalkan atau gagal.'
+      );
     } finally {
       setIsSubmitting(false);
     }

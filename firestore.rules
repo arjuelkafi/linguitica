@@ -56,7 +56,7 @@ service cloud.firestore {
         && (!('lastActiveDate' in data) || (data.lastActiveDate is string && data.lastActiveDate.size() <= 20))
         && (!('completedLessonsCount' in data) || (data.completedLessonsCount is number && data.completedLessonsCount >= 0))
         && (!('accuracyRate' in data) || (data.accuracyRate is number && data.accuracyRate >= 0 && data.accuracyRate <= 100))
-        && (!('currentLevelId' in data) || (data.currentLevelId is number && data.currentLevelId >= 1 && data.currentLevelId <= 5))
+        && (!('currentLevelId' in data) || (data.currentLevelId is number && data.currentLevelId >= 1 && data.currentLevelId <= 8))
         && (!('completedLessons' in data) || isValidStringList(data.completedLessons, 100))
         && (!('unlockedLessons' in data) || isValidStringList(data.unlockedLessons, 100))
         && data.createdAt is timestamp
@@ -102,7 +102,7 @@ service cloud.firestore {
         && data.streak is number && data.streak >= 0
         && data.completedLessonsCount is number && data.completedLessonsCount >= 0
         && data.accuracyRate is number && data.accuracyRate >= 0 && data.accuracyRate <= 100
-        && data.currentLevelId is number && data.currentLevelId >= 1 && data.currentLevelId <= 5
+        && data.currentLevelId is number && data.currentLevelId >= 1 && data.currentLevelId <= 8
         && data.joinedAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -173,7 +173,8 @@ service cloud.firestore {
           && isValidId(classId)
           && isValidId(memberId)
           && (
-            existing().userId == request.auth.uid
+            memberId == request.auth.uid
+            || (resource != null && existing().userId == request.auth.uid)
             || get(/databases/$(database)/documents/classrooms/$(classId)).data.ownerId == request.auth.uid
           );
         allow list: if isSignedIn()

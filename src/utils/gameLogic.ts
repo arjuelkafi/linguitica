@@ -74,21 +74,29 @@ export function checkQuestionAnswer(
   selectedAnswer: string,
   arrangedWords: string[]
 ): boolean {
+  const normalizeSentence = (text: string) =>
+    text
+      .trim()
+      .toLowerCase()
+      .replace(/[.,!?]/g, '')
+      .replace(/\s+/g, ' ');
+
   if (question.type === 'word_arrangement') {
     const expectedWords = Array.isArray(question.correctAnswer)
       ? question.correctAnswer
       : question.correctAnswer.split(' ');
-    const userSentence = arrangedWords.join(' ').trim().toLowerCase();
-    const expectedSentence = expectedWords.join(' ').trim().toLowerCase();
+    const userSentence = normalizeSentence(arrangedWords.join(' '));
+    const expectedSentence = normalizeSentence(expectedWords.join(' '));
     return userSentence.length > 0 && userSentence === expectedSentence;
   }
 
   if (question.type === 'translation') {
     const target = Array.isArray(question.correctAnswer)
-      ? question.correctAnswer[0]
+      ? question.correctAnswer.join(' ')
       : question.correctAnswer;
-    const cleanUser = selectedAnswer.trim().toLowerCase().replace(/[.,!?]/g, '');
-    const cleanTarget = target.trim().toLowerCase().replace(/[.,!?]/g, '');
+    const rawUser = arrangedWords.length > 0 ? arrangedWords.join(' ') : selectedAnswer;
+    const cleanUser = normalizeSentence(rawUser);
+    const cleanTarget = normalizeSentence(target);
     return cleanUser.length > 0 && cleanUser === cleanTarget;
   }
 

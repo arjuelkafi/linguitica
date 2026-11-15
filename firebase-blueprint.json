@@ -1,0 +1,257 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Learner or teacher profile and synchronized learning progress.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase user UID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name entered during login.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "username": {
+          "type": "string",
+          "description": "Handle derived from display name.",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "role": {
+          "type": "string",
+          "enum": ["student", "teacher"],
+          "description": "Primary role selected by user."
+        },
+        "xp": {
+          "type": "number",
+          "description": "Total experience points earned."
+        },
+        "coins": {
+          "type": "number",
+          "description": "Total reward coins balance."
+        },
+        "hearts": {
+          "type": "number",
+          "description": "Current remaining hearts from 0 to 5."
+        },
+        "streak": {
+          "type": "number",
+          "description": "Current consecutive learning days streak."
+        },
+        "longestStreak": {
+          "type": "number",
+          "description": "Highest streak achieved."
+        },
+        "lastActiveDate": {
+          "type": "string",
+          "description": "YYYY-MM-DD date of last completed lesson.",
+          "maxLength": 20
+        },
+        "completedLessonsCount": {
+          "type": "number",
+          "description": "Total lessons completed."
+        },
+        "accuracyRate": {
+          "type": "number",
+          "description": "Overall answer accuracy percentage 0-100."
+        },
+        "currentLevelId": {
+          "type": "number",
+          "description": "Active curriculum level ID from 1 to 5."
+        },
+        "completedLessons": {
+          "type": "array",
+          "description": "List of completed lesson IDs."
+        },
+        "unlockedLessons": {
+          "type": "array",
+          "description": "List of unlocked lesson IDs."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when profile was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when profile was last updated."
+        }
+      },
+      "required": ["uid", "name", "username", "role", "xp", "coins", "hearts", "streak", "createdAt", "updatedAt"]
+    },
+    "JoinedClassroom": {
+      "title": "JoinedClassroom",
+      "description": "Reference to a classroom joined by a student.",
+      "type": "object",
+      "properties": {
+        "classId": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 24,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "className": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "teacherName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "joinedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["classId", "userId", "className", "teacherName", "joinedAt"]
+    },
+    "Classroom": {
+      "title": "Classroom",
+      "description": "E-learning class created by a teacher with an invitation code.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "Unique uppercase join code.",
+          "minLength": 3,
+          "maxLength": 24,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Classroom display name.",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "description": {
+          "type": "string",
+          "description": "Short classroom description.",
+          "maxLength": 200
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the teacher or class admin.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerName": {
+          "type": "string",
+          "description": "Name of the teacher or class admin.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["code", "name", "ownerId", "ownerName", "createdAt", "updatedAt"]
+    },
+    "ClassroomMember": {
+      "title": "ClassroomMember",
+      "description": "Student progress snapshot inside a classroom.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the classroom teacher for secure list queries.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "classId": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 24,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "studentName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "xp": {
+          "type": "number"
+        },
+        "streak": {
+          "type": "number"
+        },
+        "completedLessonsCount": {
+          "type": "number"
+        },
+        "accuracyRate": {
+          "type": "number"
+        },
+        "currentLevelId": {
+          "type": "number"
+        },
+        "joinedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "userId",
+        "ownerId",
+        "classId",
+        "studentName",
+        "xp",
+        "streak",
+        "completedLessonsCount",
+        "accuracyRate",
+        "currentLevelId",
+        "joinedAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Stores user profile and learning progress."
+    },
+    "/users/{userId}/joinedClasses/{classId}": {
+      "schema": { "$ref": "#/entities/JoinedClassroom" },
+      "description": "Stores classrooms that a student has joined."
+    },
+    "/classrooms/{classId}": {
+      "schema": { "$ref": "#/entities/Classroom" },
+      "description": "Stores classroom metadata and teacher owner UID."
+    },
+    "/classrooms/{classId}/members/{memberId}": {
+      "schema": { "$ref": "#/entities/ClassroomMember" },
+      "description": "Stores student progress snapshots within a classroom."
+    }
+  }
+}

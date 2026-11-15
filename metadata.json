@@ -1,0 +1,6 @@
+{
+  "name": "Linguitica - Gamified English Learning Platform",
+  "description": "Learn English through structured levels, interactive exercises, XP rewards, streaks, and gamified practice.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

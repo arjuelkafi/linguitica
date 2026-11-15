@@ -1,0 +1,219 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Reusable helper primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidStringList(listVal, maxItems) {
+      return listVal is list
+        && listVal.size() <= maxItems
+        && (listVal.size() == 0 || (listVal[0] is string && listVal[0].size() <= 64));
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll([
+          'uid', 'name', 'username', 'role', 'xp', 'coins', 'hearts', 'streak', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'name', 'username', 'role', 'xp', 'coins', 'hearts', 'streak',
+          'longestStreak', 'lastActiveDate', 'completedLessonsCount', 'accuracyRate',
+          'currentLevelId', 'completedLessons', 'unlockedLessons', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
+        && data.username is string && data.username.size() >= 1 && data.username.size() <= 60
+        && data.role in ['student', 'teacher']
+        && data.xp is number && data.xp >= 0
+        && data.coins is number && data.coins >= 0
+        && data.hearts is number && data.hearts >= 0 && data.hearts <= 5
+        && data.streak is number && data.streak >= 0
+        && (!('longestStreak' in data) || (data.longestStreak is number && data.longestStreak >= 0))
+        && (!('lastActiveDate' in data) || (data.lastActiveDate is string && data.lastActiveDate.size() <= 20))
+        && (!('completedLessonsCount' in data) || (data.completedLessonsCount is number && data.completedLessonsCount >= 0))
+        && (!('accuracyRate' in data) || (data.accuracyRate is number && data.accuracyRate >= 0 && data.accuracyRate <= 100))
+        && (!('currentLevelId' in data) || (data.currentLevelId is number && data.currentLevelId >= 1 && data.currentLevelId <= 5))
+        && (!('completedLessons' in data) || isValidStringList(data.completedLessons, 100))
+        && (!('unlockedLessons' in data) || isValidStringList(data.unlockedLessons, 100))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidJoinedClassroom(data) {
+      return data.keys().hasAll(['classId', 'userId', 'className', 'teacherName', 'joinedAt'])
+        && data.keys().hasOnly(['classId', 'userId', 'className', 'teacherName', 'joinedAt'])
+        && isValidId(data.classId) && data.classId.size() >= 3 && data.classId.size() <= 24
+        && isValidId(data.userId) && data.userId == request.auth.uid
+        && data.className is string && data.className.size() >= 1 && data.className.size() <= 100
+        && data.teacherName is string && data.teacherName.size() >= 1 && data.teacherName.size() <= 80
+        && data.joinedAt is timestamp;
+    }
+
+    function isValidClassroom(data) {
+      return data.keys().hasAll(['code', 'name', 'ownerId', 'ownerName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['code', 'name', 'description', 'ownerId', 'ownerName', 'createdAt', 'updatedAt'])
+        && isValidId(data.code) && data.code.size() >= 3 && data.code.size() <= 24
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 100
+        && (!('description' in data) || (data.description is string && data.description.size() <= 200))
+        && isValidId(data.ownerId)
+        && data.ownerName is string && data.ownerName.size() >= 1 && data.ownerName.size() <= 80
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidClassroomMember(data) {
+      return data.keys().hasAll([
+          'userId', 'ownerId', 'classId', 'studentName', 'xp', 'streak',
+          'completedLessonsCount', 'accuracyRate', 'currentLevelId', 'joinedAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'userId', 'ownerId', 'classId', 'studentName', 'xp', 'streak',
+          'completedLessonsCount', 'accuracyRate', 'currentLevelId', 'joinedAt', 'updatedAt'
+        ])
+        && isValidId(data.userId)
+        && isValidId(data.ownerId)
+        && isValidId(data.classId) && data.classId.size() >= 3 && data.classId.size() <= 24
+        && data.studentName is string && data.studentName.size() >= 1 && data.studentName.size() <= 80
+        && data.xp is number && data.xp >= 0
+        && data.streak is number && data.streak >= 0
+        && data.completedLessonsCount is number && data.completedLessonsCount >= 0
+        && data.accuracyRate is number && data.accuracyRate >= 0 && data.accuracyRate <= 100
+        && data.currentLevelId is number && data.currentLevelId >= 1 && data.currentLevelId <= 5
+        && data.joinedAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+      allow create: if isOwner(userId)
+        && isValidId(userId)
+        && isValidUser(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isOwner(userId)
+        && isValidId(userId)
+        && isValidUser(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'username', 'role', 'xp', 'coins', 'hearts', 'streak',
+          'longestStreak', 'lastActiveDate', 'completedLessonsCount', 'accuracyRate',
+          'currentLevelId', 'completedLessons', 'unlockedLessons', 'updatedAt'
+        ]);
+      allow delete: if false;
+
+      match /joinedClasses/{classId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(classId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId)
+          && isValidId(userId)
+          && isValidId(classId)
+          && isValidJoinedClassroom(incoming())
+          && incoming().classId == classId
+          && incoming().joinedAt == request.time
+          && exists(/databases/$(database)/documents/classrooms/$(classId));
+        allow update: if false;
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(classId);
+      }
+    }
+
+    match /classrooms/{classId} {
+      allow get: if isSignedIn() && isValidId(classId);
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow create: if isSignedIn()
+        && isValidId(classId)
+        && isValidClassroom(incoming())
+        && incoming().code == classId
+        && incoming().ownerId == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isSignedIn()
+        && isValidId(classId)
+        && existing().ownerId == request.auth.uid
+        && isValidClassroom(incoming())
+        && incoming().ownerId == existing().ownerId
+        && incoming().code == existing().code
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'description', 'ownerName', 'updatedAt'
+        ]);
+      allow delete: if isSignedIn()
+        && isValidId(classId)
+        && existing().ownerId == request.auth.uid;
+
+      match /members/{memberId} {
+        allow get: if isSignedIn()
+          && isValidId(classId)
+          && isValidId(memberId)
+          && (
+            existing().userId == request.auth.uid
+            || get(/databases/$(database)/documents/classrooms/$(classId)).data.ownerId == request.auth.uid
+          );
+        allow list: if isSignedIn()
+          && (
+            resource.data.ownerId == request.auth.uid
+            || resource.data.userId == request.auth.uid
+          );
+        allow create: if isSignedIn()
+          && isValidId(classId)
+          && isValidId(memberId)
+          && memberId == request.auth.uid
+          && isValidClassroomMember(incoming())
+          && incoming().userId == request.auth.uid
+          && incoming().classId == classId
+          && incoming().joinedAt == request.time
+          && incoming().updatedAt == request.time
+          && exists(/databases/$(database)/documents/classrooms/$(classId))
+          && get(/databases/$(database)/documents/classrooms/$(classId)).data.ownerId == incoming().ownerId;
+        allow update: if isSignedIn()
+          && isValidId(classId)
+          && isValidId(memberId)
+          && existing().userId == request.auth.uid
+          && isValidClassroomMember(incoming())
+          && incoming().userId == existing().userId
+          && incoming().ownerId == existing().ownerId
+          && incoming().classId == existing().classId
+          && incoming().joinedAt == existing().joinedAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly([
+            'studentName', 'xp', 'streak', 'completedLessonsCount',
+            'accuracyRate', 'currentLevelId', 'updatedAt'
+          ]);
+        allow delete: if isSignedIn()
+          && isValidId(classId)
+          && isValidId(memberId)
+          && (
+            existing().userId == request.auth.uid
+            || get(/databases/$(database)/documents/classrooms/$(classId)).data.ownerId == request.auth.uid
+          );
+      }
+    }
+  }
+}

@@ -149,6 +149,27 @@ export function parseJoinCodeFromUrl(search: string, pathname: string): string |
   return null;
 }
 
+export function extractClassroomCodeInput(rawInput: string): string {
+  const trimmed = rawInput.trim();
+  if (!trimmed) return '';
+
+  if (/^https?:\/\//i.test(trimmed) || /[/?]join(?:=|\/)/i.test(trimmed)) {
+    try {
+      const parsedUrl = new URL(
+        /^https?:\/\//i.test(trimmed)
+          ? trimmed
+          : `https://dummy.local/${trimmed.replace(/^\/+/, '')}`
+      );
+      const fromUrl = parseJoinCodeFromUrl(parsedUrl.search, parsedUrl.pathname);
+      if (fromUrl) return fromUrl;
+    } catch {
+      // fall through to direct normalization
+    }
+  }
+
+  return normalizeClassCode(trimmed);
+}
+
 export function computeOverallAccuracy(correct: number, total: number): number {
   if (total <= 0) return 0;
   return Math.min(100, Math.max(0, Math.round((correct / total) * 100)));

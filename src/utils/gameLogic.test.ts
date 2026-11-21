@@ -9,6 +9,7 @@ import {
   normalizeClassCode,
   generateClassCode,
   parseJoinCodeFromUrl,
+  extractClassroomCodeInput,
   computeOverallAccuracy,
   getCefrEstimate,
   updateDailyXpHistory,
@@ -108,6 +109,11 @@ test('class code helpers normalize, generate, and parse join URLs cleanly', () =
   assert.equal(parseJoinCodeFromUrl('?join=eng402', '/'), 'ENG402');
   assert.equal(parseJoinCodeFromUrl('', '/join/kel99a'), 'KEL99A');
   assert.equal(parseJoinCodeFromUrl('', '/'), null);
+  assert.equal(extractClassroomCodeInput(' engwctk '), 'ENGWCTK');
+  assert.equal(extractClassroomCodeInput('https://linguitica.vercel.app/?join=engwctk'), 'ENGWCTK');
+  assert.equal(extractClassroomCodeInput('https://linguitica.vercel.app/join/engwctk'), 'ENGWCTK');
+  assert.equal(extractClassroomCodeInput('/join/kel402'), 'KEL402');
+  assert.equal(extractClassroomCodeInput('join123'), 'JOIN123');
 });
 
 test('analytics helpers compute accuracy, CEFR estimate, and daily XP history', () => {

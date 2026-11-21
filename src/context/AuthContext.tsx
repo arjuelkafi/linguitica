@@ -28,7 +28,6 @@ import {
 import { auth, googleProvider } from '../firebase';
 import {
   fetchUserFromCloud,
-  syncLocalJoinedMembershipProgress,
   syncUserProgressToCloud,
 } from '../services/firestoreService';
 
@@ -229,7 +228,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return DEFAULT_GUEST_USER;
     }
   });
-  const isLoggedIn = Boolean(user && user.authProvider !== 'guest');
+  const [firebaseUid, setFirebaseUid] = useState<string | null>(() => auth.currentUser?.uid || null);
+  const isLoggedIn = Boolean(user && user.authProvider !== 'guest' && firebaseUid);
 
   const [stats, setStats] = useState<UserStats>(() => {
     try {
@@ -263,6 +263,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [authReady, setAuthReady] = useState<boolean>(false);
   const [secondsUntilNextHeart, setSecondsUntilNextHeart] = useState<number>(0);
   const isManualAuthInProgressRef = useRef<boolean>(false);
+  const userRef = useRef<UserProfile | null>(user);
+  const attemptedRecoveryRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
 
   const clearPendingJoinCode = useCallback(() => {
     setPendingJoinCode(null);
@@ -279,47 +285,96 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Listen to Firebase Auth state changes
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (fbUser) => {
-      if (fbUser && !isManualAuthInProgressRef.current) {
-        try {
-          const cloudData = await fetchUserFromCloud(fbUser.uid);
-          if (cloudData?.profilePartial && cloudData?.statsPartial) {
-            setUser((prev) => ({
-              id: fbUser.uid,
-              name: cloudData.profilePartial?.name || fbUser.displayName || prev?.name || 'Pengguna',
-              username: cloudData.profilePartial?.username || prev?.username || 'learner',
-              role: (cloudData.profilePartial?.role as UserRole) || prev?.role || 'student',
-              avatar: 'globe',
-              isCloudSynced: true,
-              authProvider: fbUser.isAnonymous ? 'name' : 'google',
-              createdAt: prev?.createdAt || new Date().toISOString(),
-            }));
-            setStats((prev) => ({
-              ...prev,
-              ...cloudData.statsPartial,
-            }));
-          } else {
+      if (fbUser) {
+        setFirebaseUid(fbUser.uid);
+        if (!isManualAuthInProgressRef.current) {
+          try {
+            const cloudData = await fetchUserFromCloud(fbUser.uid);
+            if (cloudData?.profilePartial && cloudData?.statsPartial) {
+              setUser((prev) => ({
+                id: fbUser.uid,
+                name: cloudData.profilePartial?.name || fbUser.displayName || prev?.name || 'Pengguna',
+                username: cloudData.profilePartial?.username || prev?.username || 'learner',
+                role: (cloudData.profilePartial?.role as UserRole) || prev?.role || 'student',
+                avatar: 'globe',
+                isCloudSynced: true,
+                authProvider: fbUser.isAnonymous ? 'name' : 'google',
+                createdAt: prev?.createdAt || new Date().toISOString(),
+              }));
+              setStats((prev) => ({
+                ...prev,
+                ...cloudData.statsPartial,
+              }));
+            } else {
+              setUser((prev) =>
+                prev && prev.authProvider !== 'guest'
+                  ? {
+                      ...prev,
+                      id: fbUser.uid,
+                      isCloudSynced: true,
+                      authProvider: fbUser.isAnonymous ? 'name' : 'google',
+                    }
+                  : {
+                      id: fbUser.uid,
+                      name: fbUser.displayName || fbUser.email?.split('@')[0] || 'Pengguna',
+                      username: getNameSlug(fbUser.displayName || 'learner'),
+                      role: 'student',
+                      avatar: 'globe',
+                      isCloudSynced: true,
+                      authProvider: fbUser.isAnonymous ? 'name' : 'google',
+                      createdAt: new Date().toISOString(),
+                    }
+              );
+            }
+          } catch {
+            // Keep basic Firebase session even if initial profile fetch fails
             setUser((prev) =>
               prev && prev.authProvider !== 'guest'
-                ? {
-                    ...prev,
-                    id: fbUser.uid,
-                    isCloudSynced: true,
-                    authProvider: fbUser.isAnonymous ? 'name' : 'google',
-                  }
-                : {
-                    id: fbUser.uid,
-                    name: fbUser.displayName || fbUser.email?.split('@')[0] || 'Pengguna',
-                    username: getNameSlug(fbUser.displayName || 'learner'),
-                    role: 'student',
-                    avatar: 'globe',
-                    isCloudSynced: true,
-                    authProvider: fbUser.isAnonymous ? 'name' : 'google',
-                    createdAt: new Date().toISOString(),
-                  }
+                ? { ...prev, id: fbUser.uid, isCloudSynced: true }
+                : prev
             );
           }
+        }
+        setAuthReady(true);
+        return;
+      }
+
+      // Firebase Auth has no active session
+      setFirebaseUid(null);
+      const cachedUser = userRef.current;
+
+      if (
+        cachedUser &&
+        cachedUser.authProvider === 'name' &&
+        !isManualAuthInProgressRef.current &&
+        !attemptedRecoveryRef.current
+      ) {
+        attemptedRecoveryRef.current = true;
+        try {
+          const cred = await signInAnonymously(auth);
+          setFirebaseUid(cred.user.uid);
+          setUser((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  id: cred.user.uid,
+                  isCloudSynced: true,
+                }
+              : prev
+          );
+          setAuthReady(true);
+          return;
         } catch {
-          // Ignore initial fetch errors cleanly
+          // Recovery failed: fall back to clean guest state below
+        }
+      }
+
+      if (cachedUser && cachedUser.authProvider !== 'guest' && !isManualAuthInProgressRef.current) {
+        setUser(DEFAULT_GUEST_USER);
+        try {
+          localStorage.removeItem(STORAGE_KEYS.USER);
+        } catch {
+          // ignore
         }
       }
       setAuthReady(true);
@@ -352,13 +407,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEYS.STATS, JSON.stringify(stats));
-      if (user) {
-        syncLocalJoinedMembershipProgress(user, stats);
-      }
     } catch {
       // ignore storage errors
     }
-  }, [stats, user]);
+  }, [stats]);
 
   useEffect(() => {
     try {
@@ -442,8 +494,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ? createDemoStats()
       : createDefaultStats();
 
-    let nextUid = restoredUser?.id || `user_${slug}_${Date.now()}`;
-    let cloudSynced = false;
+    let nextUid = '';
 
     isManualAuthInProgressRef.current = true;
     try {
@@ -451,13 +502,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (!auth.currentUser) {
           const cred = await signInAnonymously(auth);
           nextUid = cred.user.uid;
-          cloudSynced = true;
         } else {
           nextUid = auth.currentUser.uid;
-          cloudSynced = true;
         }
       } catch {
-        cloudSynced = false;
+        throw new Error(
+          'Gagal menghubungkan sesi akun. Periksa koneksi internet lalu coba lagi, atau masuk dengan Google.'
+        );
       }
 
       const nextUser: UserProfile = {
@@ -466,18 +517,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         username: slug,
         role: restoredUser?.role || role,
         avatar: 'globe',
-        isCloudSynced: cloudSynced,
+        isCloudSynced: true,
         authProvider: 'name',
         createdAt: restoredUser?.createdAt || new Date().toISOString(),
       };
 
+      setFirebaseUid(nextUid);
       setUser(nextUser);
       setStats(nextStats);
       if (restoredAchievements) setAchievements(restoredAchievements);
 
-      if (cloudSynced) {
-        await syncCloudSafe(nextUser, nextStats);
-      }
+      await syncCloudSafe(nextUser, nextStats);
     } finally {
       isManualAuthInProgressRef.current = false;
     }
@@ -524,6 +574,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         createdAt: user?.createdAt || new Date().toISOString(),
       };
 
+      setFirebaseUid(fbUser.uid);
       setUser(nextUser);
       setStats(finalStats);
       await syncCloudSafe(nextUser, finalStats);
@@ -552,6 +603,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch {
       // ignore signOut error
     }
+    setFirebaseUid(null);
     setUser(DEFAULT_GUEST_USER);
     localStorage.removeItem(STORAGE_KEYS.USER);
   };

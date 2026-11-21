@@ -12,9 +12,9 @@ import {
   removeStudentFromClassroom,
 } from '../services/firestoreService';
 import {
+  extractClassroomCodeInput,
   generateClassCode,
   normalizeClassCode,
-  parseJoinCodeFromUrl,
 } from '../utils/gameLogic';
 import { NameLoginCard } from './AuthModal';
 import {
@@ -165,20 +165,7 @@ export const ClassroomView: React.FC = () => {
         return;
       }
 
-      let codeToJoin = '';
-      if (trimmed.includes('http') || trimmed.includes('join')) {
-        try {
-          const parsedUrl = new URL(
-            trimmed.startsWith('http') ? trimmed : `https://dummy.local/${trimmed.replace(/^\/+/, '')}`
-          );
-          codeToJoin = parseJoinCodeFromUrl(parsedUrl.search, parsedUrl.pathname) || '';
-        } catch {
-          codeToJoin = '';
-        }
-      }
-      if (!codeToJoin) {
-        codeToJoin = normalizeClassCode(trimmed);
-      }
+      const codeToJoin = extractClassroomCodeInput(trimmed);
 
       setIsJoining(true);
       setJoinMessage(null);
@@ -313,6 +300,26 @@ export const ClassroomView: React.FC = () => {
     members.length > 0
       ? Math.round(members.reduce((sum, m) => sum + m.accuracyRate, 0) / members.length)
       : 0;
+
+  if (!authReady) {
+    return (
+      <div className="w-full max-w-3xl mx-auto pb-24">
+        <div className="mb-6">
+          <h2 className="text-2xl sm:text-3xl font-black text-slate-900">
+            Ruang Kelas Linguitica
+          </h2>
+          <p className="text-sm text-slate-600 mt-1">
+            Buat kelas untuk memantau progres murid, atau bergabung memakai kode dan link undangan.
+          </p>
+        </div>
+        <div className="bg-white rounded-3xl p-8 border-2 border-slate-200 text-center">
+          <p className="text-sm font-bold text-slate-600">
+            Memeriksa sesi akun kelas...
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (!isLoggedIn) {
     return (

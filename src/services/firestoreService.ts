@@ -3,6 +3,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
   query,
   serverTimestamp,
@@ -21,26 +22,25 @@ import {
 } from '../types';
 import { computeOverallAccuracy, normalizeClassCode } from '../utils/gameLogic';
 
-const LOCAL_CLASSROOMS_KEY = 'linguitica_local_classrooms_v1';
-const LOCAL_MEMBERS_KEY = 'linguitica_local_members_v1';
-const LOCAL_JOINED_KEY = 'linguitica_local_joined_v1';
-
-// Helper to safely read/write local fallback stores
-function readLocalMap<T>(key: string): Record<string, T> {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
+function requireActiveUid(): string {
+  const uid = auth.currentUser?.uid;
+  if (!uid) {
+    throw new Error('Silakan masuk akun terlebih dahulu untuk mengakses fitur kelas.');
   }
+  return uid;
 }
 
-function writeLocalMap<T>(key: string, data: Record<string, T>): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(data));
-  } catch {
-    // ignore storage quota errors
-  }
+function isNetworkUnavailableError(error: unknown): boolean {
+  const errObj = error as { code?: string; message?: string } | null;
+  const code = String(errObj?.code || '').toLowerCase();
+  const message = String(errObj?.message || '').toLowerCase();
+  return (
+    code.includes('unavailable') ||
+    code.includes('network') ||
+    message.includes('client is offline') ||
+    message.includes('failed to get document because the client is offline') ||
+    message.includes('network error')
+  );
 }
 
 export function isFirebaseAuthActive(): boolean {
@@ -109,7 +109,7 @@ export async function syncUserProgressToCloud(
       });
     }
 
-    // Safely update student progress inside each joined classroom; clean up stale refs if removed
+    // Update student progress inside each joined classroom; clean up stale refs if removed
     const joinedSnap = await getDocs(collection(db, 'users', currentUid, 'joinedClasses'));
     if (!joinedSnap.empty) {
       await Promise.all(
@@ -169,9 +169,10 @@ export async function fetchUserFromCloud(uid: string): Promise<{
         lastActiveDate: data.lastActiveDate || '',
         currentLevelId: typeof data.currentLevelId === 'number' ? data.currentLevelId : 1,
         completedLessons: Array.isArray(data.completedLessons) ? data.completedLessons : [],
-        unlockedLessons: Array.isArray(data.unlockedLessons) && data.unlockedLessons.length > 0
-          ? data.unlockedLessons
-          : ['l1-1-1'],
+        unlockedLessons:
+          Array.isArray(data.unlockedLessons) && data.unlockedLessons.length > 0
+            ? data.unlockedLessons
+            : ['l1-1-1'],
       },
     };
   } catch (error) {
@@ -186,6 +187,7 @@ export async function createClassroomRecord(
   rawCode: string,
   rawDesc: string
 ): Promise<Classroom> {
+  const currentUid = requireActiveUid();
   const code = normalizeClassCode(rawCode);
   const name = rawName.trim().slice(0, 100);
   const description = rawDesc.trim().slice(0, 200);
@@ -198,186 +200,148 @@ export async function createClassroomRecord(
   }
 
   const nowIso = new Date().toISOString();
-  const currentUid = auth.currentUser?.uid;
+  const classRef = doc(db, 'classrooms', code);
 
-  if (currentUid) {
-    const classRef = doc(db, 'classrooms', code);
-    try {
-      const existingSnap = await getDoc(classRef);
-      if (existingSnap.exists()) {
-        throw new Error(`Kode kelas ${code} sudah dipakai. Gunakan kode lain.`);
-      }
-      await setDoc(classRef, {
-        code,
-        name,
-        description,
-        ownerId: currentUid,
-        ownerName: user.name.trim().slice(0, 80) || 'Guru',
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('sudah dipakai')) {
-        throw error;
-      }
-      handleFirestoreError(error, OperationType.CREATE, `classrooms/${code}`);
+  try {
+    const existingSnap = await getDocFromServer(classRef);
+    if (existingSnap.exists()) {
+      throw new Error(`Kode kelas ${code} sudah dipakai. Gunakan kode lain.`);
     }
-
-    return {
+    await setDoc(classRef, {
       code,
       name,
       description,
       ownerId: currentUid,
-      ownerName: user.name,
-      createdAt: nowIso,
-      updatedAt: nowIso,
-    };
+      ownerName: user.name.trim().slice(0, 80) || 'Guru',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('sudah dipakai')) {
+      throw error;
+    }
+    if (isNetworkUnavailableError(error)) {
+      throw new Error('Tidak dapat terhubung ke server kelas. Periksa koneksi internetmu lalu coba lagi.');
+    }
+    handleFirestoreError(error, OperationType.CREATE, `classrooms/${code}`);
   }
 
-  // Local fallback if user has not connected Firebase Auth yet
-  const localMap = readLocalMap<Classroom>(LOCAL_CLASSROOMS_KEY);
-  if (localMap[code]) {
-    throw new Error(`Kode kelas ${code} sudah ada di perangkat ini.`);
-  }
-  const newClass: Classroom = {
+  return {
     code,
     name,
     description,
-    ownerId: user.id,
+    ownerId: currentUid,
     ownerName: user.name,
     createdAt: nowIso,
     updatedAt: nowIso,
   };
-  localMap[code] = newClass;
-  writeLocalMap(LOCAL_CLASSROOMS_KEY, localMap);
-  return newClass;
 }
 
-export async function listTeacherClassrooms(userId: string): Promise<Classroom[]> {
-  const currentUid = auth.currentUser?.uid;
-  if (currentUid) {
-    try {
-      const q = query(collection(db, 'classrooms'), where('ownerId', '==', currentUid));
-      const snap = await getDocs(q);
-      const list: Classroom[] = [];
-      snap.forEach((docSnap) => {
-        const d = docSnap.data();
-        list.push({
-          code: d.code,
-          name: d.name,
-          description: d.description || '',
-          ownerId: d.ownerId,
-          ownerName: d.ownerName,
-          createdAt: d.createdAt?.toDate ? d.createdAt.toDate().toISOString() : new Date().toISOString(),
-          updatedAt: d.updatedAt?.toDate ? d.updatedAt.toDate().toISOString() : new Date().toISOString(),
-        });
+export async function listTeacherClassrooms(_userId: string): Promise<Classroom[]> {
+  const currentUid = requireActiveUid();
+  try {
+    const q = query(collection(db, 'classrooms'), where('ownerId', '==', currentUid));
+    const snap = await getDocs(q);
+    const list: Classroom[] = [];
+    snap.forEach((docSnap) => {
+      const d = docSnap.data();
+      list.push({
+        code: d.code,
+        name: d.name,
+        description: d.description || '',
+        ownerId: d.ownerId,
+        ownerName: d.ownerName,
+        createdAt: d.createdAt?.toDate ? d.createdAt.toDate().toISOString() : new Date().toISOString(),
+        updatedAt: d.updatedAt?.toDate ? d.updatedAt.toDate().toISOString() : new Date().toISOString(),
       });
-      return list;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, 'classrooms');
+    });
+    return list;
+  } catch (error) {
+    if (isNetworkUnavailableError(error)) {
+      throw new Error('Tidak dapat memuat daftar kelas. Periksa koneksi internetmu.');
     }
+    handleFirestoreError(error, OperationType.LIST, 'classrooms');
   }
-
-  const localMap = readLocalMap<Classroom>(LOCAL_CLASSROOMS_KEY);
-  return Object.values(localMap).filter((c) => c.ownerId === userId);
 }
 
 export async function listClassroomMembers(
   classCode: string,
-  ownerId: string
+  _ownerId: string
 ): Promise<ClassroomMember[]> {
+  const currentUid = requireActiveUid();
   const code = normalizeClassCode(classCode);
-  const currentUid = auth.currentUser?.uid;
 
-  if (currentUid) {
-    try {
-      const q = query(
-        collection(db, 'classrooms', code, 'members'),
-        where('ownerId', '==', currentUid)
-      );
-      const snap = await getDocs(q);
-      const members: ClassroomMember[] = [];
-      snap.forEach((docSnap) => {
-        const d = docSnap.data();
-        members.push({
-          userId: d.userId,
-          ownerId: d.ownerId,
-          classId: d.classId,
-          studentName: d.studentName,
-          xp: d.xp || 0,
-          streak: d.streak || 0,
-          completedLessonsCount: d.completedLessonsCount || 0,
-          accuracyRate: d.accuracyRate || 0,
-          currentLevelId: d.currentLevelId || 1,
-          joinedAt: d.joinedAt?.toDate ? d.joinedAt.toDate().toISOString() : new Date().toISOString(),
-          updatedAt: d.updatedAt?.toDate ? d.updatedAt.toDate().toISOString() : new Date().toISOString(),
-        });
+  try {
+    const q = query(
+      collection(db, 'classrooms', code, 'members'),
+      where('ownerId', '==', currentUid)
+    );
+    const snap = await getDocs(q);
+    const members: ClassroomMember[] = [];
+    snap.forEach((docSnap) => {
+      const d = docSnap.data();
+      members.push({
+        userId: d.userId,
+        ownerId: d.ownerId,
+        classId: d.classId,
+        studentName: d.studentName,
+        xp: d.xp || 0,
+        streak: d.streak || 0,
+        completedLessonsCount: d.completedLessonsCount || 0,
+        accuracyRate: d.accuracyRate || 0,
+        currentLevelId: d.currentLevelId || 1,
+        joinedAt: d.joinedAt?.toDate ? d.joinedAt.toDate().toISOString() : new Date().toISOString(),
+        updatedAt: d.updatedAt?.toDate ? d.updatedAt.toDate().toISOString() : new Date().toISOString(),
       });
-      return members.sort((a, b) => b.xp - a.xp);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, `classrooms/${code}/members`);
+    });
+    return members.sort((a, b) => b.xp - a.xp);
+  } catch (error) {
+    if (isNetworkUnavailableError(error)) {
+      throw new Error('Tidak dapat memuat data murid. Periksa koneksi internetmu.');
     }
+    handleFirestoreError(error, OperationType.LIST, `classrooms/${code}/members`);
   }
-
-  const localMembers = readLocalMap<Record<string, ClassroomMember>>(LOCAL_MEMBERS_KEY);
-  const classRoster = localMembers[code] || {};
-  return Object.values(classRoster)
-    .filter((m) => m.ownerId === ownerId)
-    .sort((a, b) => b.xp - a.xp);
 }
 
 export async function removeStudentFromClassroom(
   classCode: string,
   studentUid: string
 ): Promise<void> {
+  requireActiveUid();
   const code = normalizeClassCode(classCode);
-  const currentUid = auth.currentUser?.uid;
 
-  if (currentUid) {
-    try {
-      await deleteDoc(doc(db, 'classrooms', code, 'members', studentUid));
-      return;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `classrooms/${code}/members/${studentUid}`);
+  try {
+    await deleteDoc(doc(db, 'classrooms', code, 'members', studentUid));
+  } catch (error) {
+    if (isNetworkUnavailableError(error)) {
+      throw new Error('Tidak dapat mengeluarkan murid. Periksa koneksi internetmu.');
     }
-  }
-
-  const localMembers = readLocalMap<Record<string, ClassroomMember>>(LOCAL_MEMBERS_KEY);
-  if (localMembers[code]) {
-    delete localMembers[code][studentUid];
-    writeLocalMap(LOCAL_MEMBERS_KEY, localMembers);
+    handleFirestoreError(error, OperationType.DELETE, `classrooms/${code}/members/${studentUid}`);
   }
 }
 
 export async function deleteTeacherClassroom(classCode: string): Promise<void> {
+  const currentUid = requireActiveUid();
   const code = normalizeClassCode(classCode);
-  const currentUid = auth.currentUser?.uid;
 
-  if (currentUid) {
-    try {
-      const membersQ = query(
-        collection(db, 'classrooms', code, 'members'),
-        where('ownerId', '==', currentUid)
-      );
-      const membersSnap = await getDocs(membersQ);
-      if (!membersSnap.empty) {
-        const batch = writeBatch(db);
-        membersSnap.forEach((mDoc) => batch.delete(mDoc.ref));
-        await batch.commit();
-      }
-      await deleteDoc(doc(db, 'classrooms', code));
-      return;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `classrooms/${code}`);
+  try {
+    const membersQ = query(
+      collection(db, 'classrooms', code, 'members'),
+      where('ownerId', '==', currentUid)
+    );
+    const membersSnap = await getDocs(membersQ);
+    if (!membersSnap.empty) {
+      const batch = writeBatch(db);
+      membersSnap.forEach((mDoc) => batch.delete(mDoc.ref));
+      await batch.commit();
     }
+    await deleteDoc(doc(db, 'classrooms', code));
+  } catch (error) {
+    if (isNetworkUnavailableError(error)) {
+      throw new Error('Tidak dapat menghapus kelas. Periksa koneksi internetmu.');
+    }
+    handleFirestoreError(error, OperationType.DELETE, `classrooms/${code}`);
   }
-
-  const localMap = readLocalMap<Classroom>(LOCAL_CLASSROOMS_KEY);
-  delete localMap[code];
-  writeLocalMap(LOCAL_CLASSROOMS_KEY, localMap);
-  const localMembers = readLocalMap<Record<string, ClassroomMember>>(LOCAL_MEMBERS_KEY);
-  delete localMembers[code];
-  writeLocalMap(LOCAL_MEMBERS_KEY, localMembers);
 }
 
 export async function joinClassroomByCode(
@@ -385,6 +349,7 @@ export async function joinClassroomByCode(
   stats: UserStats,
   rawCode: string
 ): Promise<JoinedClassroom> {
+  const currentUid = requireActiveUid();
   const code = normalizeClassCode(rawCode);
   if (code.length < 3) {
     throw new Error('Kode kelas minimal 3 karakter huruf atau angka.');
@@ -394,207 +359,130 @@ export async function joinClassroomByCode(
     stats.totalCorrectAnswers,
     stats.totalQuestionsAnswered
   );
-  const currentUid = auth.currentUser?.uid;
 
-  if (currentUid) {
-    const classRef = doc(db, 'classrooms', code);
-    let classData: Record<string, unknown> | null = null;
-    try {
-      const classSnap = await getDoc(classRef);
-      if (!classSnap.exists()) {
-        throw new Error(`Kelas dengan kode ${code} tidak ditemukan.`);
-      }
-      classData = classSnap.data();
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('tidak ditemukan')) {
-        throw error;
-      }
-      handleFirestoreError(error, OperationType.GET, `classrooms/${code}`);
+  const classRef = doc(db, 'classrooms', code);
+  let classData: Record<string, unknown> | null = null;
+  try {
+    const classSnap = await getDocFromServer(classRef);
+    if (!classSnap.exists()) {
+      throw new Error(`Kelas dengan kode ${code} tidak ditemukan.`);
     }
-
-    const ownerId = String(classData?.ownerId || '');
-    const className = String(classData?.name || code);
-    const teacherName = String(classData?.ownerName || 'Guru');
-    const safeStudentName = user.name.trim().slice(0, 80) || 'Murid';
-    const clampedLevel = Math.min(8, Math.max(1, stats.currentLevelId));
-
-    try {
-      const memberRef = doc(db, 'classrooms', code, 'members', currentUid);
-      const joinedRef = doc(db, 'users', currentUid, 'joinedClasses', code);
-      const [memberSnap, joinedSnap] = await Promise.all([
-        getDoc(memberRef),
-        getDoc(joinedRef),
-      ]);
-
-      const batch = writeBatch(db);
-      if (memberSnap.exists()) {
-        batch.update(memberRef, {
-          studentName: safeStudentName,
-          xp: Math.max(0, stats.xp),
-          streak: Math.max(0, stats.streak),
-          completedLessonsCount: stats.completedLessons.length,
-          accuracyRate,
-          currentLevelId: clampedLevel,
-          updatedAt: serverTimestamp(),
-        });
-      } else {
-        batch.set(memberRef, {
-          userId: currentUid,
-          ownerId,
-          classId: code,
-          studentName: safeStudentName,
-          xp: Math.max(0, stats.xp),
-          streak: Math.max(0, stats.streak),
-          completedLessonsCount: stats.completedLessons.length,
-          accuracyRate,
-          currentLevelId: clampedLevel,
-          joinedAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      }
-
-      if (!joinedSnap.exists()) {
-        batch.set(joinedRef, {
-          classId: code,
-          userId: currentUid,
-          className,
-          teacherName,
-          joinedAt: serverTimestamp(),
-        });
-      }
-
-      await batch.commit();
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `classrooms/${code}/members/${currentUid}`);
+    classData = classSnap.data();
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('tidak ditemukan')) {
+      throw error;
     }
-
-    return {
-      classId: code,
-      userId: currentUid,
-      className,
-      teacherName,
-      joinedAt: new Date().toISOString(),
-    };
-  }
-
-  // Local fallback
-  const localClasses = readLocalMap<Classroom>(LOCAL_CLASSROOMS_KEY);
-  const targetClass = localClasses[code];
-  if (!targetClass) {
-    throw new Error(`Kelas dengan kode ${code} tidak ditemukan.`);
-  }
-
-  const nowIso = new Date().toISOString();
-  const localMembers = readLocalMap<Record<string, ClassroomMember>>(LOCAL_MEMBERS_KEY);
-  if (!localMembers[code]) localMembers[code] = {};
-  localMembers[code][user.id] = {
-    userId: user.id,
-    ownerId: targetClass.ownerId,
-    classId: code,
-    studentName: user.name,
-    xp: stats.xp,
-    streak: stats.streak,
-    completedLessonsCount: stats.completedLessons.length,
-    accuracyRate,
-    currentLevelId: stats.currentLevelId,
-    joinedAt: nowIso,
-    updatedAt: nowIso,
-  };
-  writeLocalMap(LOCAL_MEMBERS_KEY, localMembers);
-
-  const localJoined = readLocalMap<Record<string, JoinedClassroom>>(LOCAL_JOINED_KEY);
-  if (!localJoined[user.id]) localJoined[user.id] = {};
-  const joinedRecord: JoinedClassroom = {
-    classId: code,
-    userId: user.id,
-    className: targetClass.name,
-    teacherName: targetClass.ownerName,
-    joinedAt: nowIso,
-  };
-  localJoined[user.id][code] = joinedRecord;
-  writeLocalMap(LOCAL_JOINED_KEY, localJoined);
-
-  return joinedRecord;
-}
-
-export async function listStudentJoinedClasses(userId: string): Promise<JoinedClassroom[]> {
-  const currentUid = auth.currentUser?.uid;
-  if (currentUid) {
-    try {
-      const snap = await getDocs(collection(db, 'users', currentUid, 'joinedClasses'));
-      const list: JoinedClassroom[] = [];
-      snap.forEach((docSnap) => {
-        const d = docSnap.data();
-        list.push({
-          classId: d.classId,
-          userId: d.userId,
-          className: d.className,
-          teacherName: d.teacherName,
-          joinedAt: d.joinedAt?.toDate ? d.joinedAt.toDate().toISOString() : new Date().toISOString(),
-        });
-      });
-      return list;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, `users/${currentUid}/joinedClasses`);
+    if (isNetworkUnavailableError(error)) {
+      throw new Error('Tidak dapat terhubung ke server kelas. Periksa koneksi internetmu lalu coba lagi.');
     }
+    handleFirestoreError(error, OperationType.GET, `classrooms/${code}`);
   }
 
-  const localJoined = readLocalMap<Record<string, JoinedClassroom>>(LOCAL_JOINED_KEY);
-  return Object.values(localJoined[userId] || {});
-}
+  const ownerId = String(classData?.ownerId || '');
+  const className = String(classData?.name || code);
+  const teacherName = String(classData?.ownerName || 'Guru');
+  const safeStudentName = user.name.trim().slice(0, 80) || 'Murid';
+  const clampedLevel = Math.min(8, Math.max(1, stats.currentLevelId));
 
-export async function leaveStudentClassroom(userId: string, classCode: string): Promise<void> {
-  const code = normalizeClassCode(classCode);
-  const currentUid = auth.currentUser?.uid;
+  try {
+    const memberRef = doc(db, 'classrooms', code, 'members', currentUid);
+    const joinedRef = doc(db, 'users', currentUid, 'joinedClasses', code);
+    const [memberSnap, joinedSnap] = await Promise.all([
+      getDocFromServer(memberRef),
+      getDocFromServer(joinedRef),
+    ]);
 
-  if (currentUid) {
-    try {
-      const batch = writeBatch(db);
-      batch.delete(doc(db, 'classrooms', code, 'members', currentUid));
-      batch.delete(doc(db, 'users', currentUid, 'joinedClasses', code));
-      await batch.commit();
-      return;
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `users/${currentUid}/joinedClasses/${code}`);
-    }
-  }
-
-  const localMembers = readLocalMap<Record<string, ClassroomMember>>(LOCAL_MEMBERS_KEY);
-  if (localMembers[code]) {
-    delete localMembers[code][userId];
-    writeLocalMap(LOCAL_MEMBERS_KEY, localMembers);
-  }
-  const localJoined = readLocalMap<Record<string, JoinedClassroom>>(LOCAL_JOINED_KEY);
-  if (localJoined[userId]) {
-    delete localJoined[userId][code];
-    writeLocalMap(LOCAL_JOINED_KEY, localJoined);
-  }
-}
-
-export function syncLocalJoinedMembershipProgress(user: UserProfile, stats: UserStats): void {
-  if (auth.currentUser) return;
-  const accuracyRate = computeOverallAccuracy(
-    stats.totalCorrectAnswers,
-    stats.totalQuestionsAnswered
-  );
-  const localJoined = readLocalMap<Record<string, JoinedClassroom>>(LOCAL_JOINED_KEY);
-  const userJoined = Object.keys(localJoined[user.id] || {});
-  if (userJoined.length === 0) return;
-
-  const localMembers = readLocalMap<Record<string, ClassroomMember>>(LOCAL_MEMBERS_KEY);
-  for (const code of userJoined) {
-    if (localMembers[code] && localMembers[code][user.id]) {
-      localMembers[code][user.id] = {
-        ...localMembers[code][user.id],
-        studentName: user.name,
-        xp: stats.xp,
-        streak: stats.streak,
+    const batch = writeBatch(db);
+    if (memberSnap.exists()) {
+      batch.update(memberRef, {
+        studentName: safeStudentName,
+        xp: Math.max(0, stats.xp),
+        streak: Math.max(0, stats.streak),
         completedLessonsCount: stats.completedLessons.length,
         accuracyRate,
-        currentLevelId: stats.currentLevelId,
-        updatedAt: new Date().toISOString(),
-      };
+        currentLevelId: clampedLevel,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      batch.set(memberRef, {
+        userId: currentUid,
+        ownerId,
+        classId: code,
+        studentName: safeStudentName,
+        xp: Math.max(0, stats.xp),
+        streak: Math.max(0, stats.streak),
+        completedLessonsCount: stats.completedLessons.length,
+        accuracyRate,
+        currentLevelId: clampedLevel,
+        joinedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
     }
+
+    if (!joinedSnap.exists()) {
+      batch.set(joinedRef, {
+        classId: code,
+        userId: currentUid,
+        className,
+        teacherName,
+        joinedAt: serverTimestamp(),
+      });
+    }
+
+    await batch.commit();
+  } catch (error) {
+    if (isNetworkUnavailableError(error)) {
+      throw new Error('Tidak dapat terhubung ke server kelas. Periksa koneksi internetmu lalu coba lagi.');
+    }
+    handleFirestoreError(error, OperationType.WRITE, `classrooms/${code}/members/${currentUid}`);
   }
-  writeLocalMap(LOCAL_MEMBERS_KEY, localMembers);
+
+  return {
+    classId: code,
+    userId: currentUid,
+    className,
+    teacherName,
+    joinedAt: new Date().toISOString(),
+  };
+}
+
+export async function listStudentJoinedClasses(_userId: string): Promise<JoinedClassroom[]> {
+  const currentUid = requireActiveUid();
+  try {
+    const snap = await getDocs(collection(db, 'users', currentUid, 'joinedClasses'));
+    const list: JoinedClassroom[] = [];
+    snap.forEach((docSnap) => {
+      const d = docSnap.data();
+      list.push({
+        classId: d.classId,
+        userId: d.userId,
+        className: d.className,
+        teacherName: d.teacherName,
+        joinedAt: d.joinedAt?.toDate ? d.joinedAt.toDate().toISOString() : new Date().toISOString(),
+      });
+    });
+    return list;
+  } catch (error) {
+    if (isNetworkUnavailableError(error)) {
+      throw new Error('Tidak dapat memuat kelas yang diikuti. Periksa koneksi internetmu.');
+    }
+    handleFirestoreError(error, OperationType.LIST, `users/${currentUid}/joinedClasses`);
+  }
+}
+
+export async function leaveStudentClassroom(_userId: string, classCode: string): Promise<void> {
+  const currentUid = requireActiveUid();
+  const code = normalizeClassCode(classCode);
+
+  try {
+    const batch = writeBatch(db);
+    batch.delete(doc(db, 'classrooms', code, 'members', currentUid));
+    batch.delete(doc(db, 'users', currentUid, 'joinedClasses', code));
+    await batch.commit();
+  } catch (error) {
+    if (isNetworkUnavailableError(error)) {
+      throw new Error('Tidak dapat keluar dari kelas. Periksa koneksi internetmu.');
+    }
+    handleFirestoreError(error, OperationType.DELETE, `users/${currentUid}/joinedClasses/${code}`);
+  }
 }

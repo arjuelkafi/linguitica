@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 
 export const SettingsView: React.FC = () => {
-  const { settings, updateSettings, resetProgress, logout, refillHeartsFull } = useAuth();
+  const { isLoggedIn, settings, updateSettings, resetProgress, logout, refillHeartsFull } = useAuth();
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
 
@@ -42,10 +42,10 @@ export const SettingsView: React.FC = () => {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h2 className="text-2xl sm:text-3xl font-black text-slate-900">
-            Pengaturan Akun & Belajar
+            Pengaturan Belajar
           </h2>
           <p className="text-xs sm:text-sm text-slate-500 mt-1">
-            Sesuaikan preferensi pengalaman belajar bahasa Inggrismu di Linguitica.
+            Sesuaikan preferensi belajar bahasa Inggrismu di Linguitica.
           </p>
         </div>
         {savedNotice && (
@@ -128,7 +128,7 @@ export const SettingsView: React.FC = () => {
         <div className="bg-white rounded-3xl p-6 border-2 border-slate-200 shadow-xs">
           <h3 className="text-base font-black text-slate-900 mb-2">Bantuan Belajar</h3>
           <p className="text-xs text-slate-500 mb-4">
-            Ingin terus berlatih tanpa menunggu regenerasi hati 30 menit?
+            Ingin terus berlatih tanpa menunggu pemulihan hati 30 menit?
           </p>
           <button
             onClick={() => {
@@ -145,10 +145,10 @@ export const SettingsView: React.FC = () => {
         <div className="bg-rose-50/50 rounded-3xl p-6 border-2 border-rose-200">
           <div className="flex items-center gap-2 mb-2 text-rose-700">
             <ShieldAlert size={18} />
-            <h3 className="text-base font-black">Zona Tindakan Akun</h3>
+            <h3 className="text-base font-black">Pengaturan Kemajuan</h3>
           </div>
           <p className="text-xs text-slate-600 mb-4">
-            Atur ulang semua pencapaian atau keluar dari akun Anda saat ini.
+            Atur ulang kemajuan belajar atau kelola akunmu di sini.
           </p>
 
           <div className="space-y-3">
@@ -185,12 +185,14 @@ export const SettingsView: React.FC = () => {
               </button>
             )}
 
-            <button
-              onClick={logout}
-              className="w-full py-3 px-4 bg-white hover:bg-slate-100 text-slate-700 font-bold rounded-2xl border-2 border-slate-200 text-sm transition flex items-center justify-center gap-2"
-            >
-              <LogOut size={16} /> Keluar dari Akun (Logout)
-            </button>
+            {isLoggedIn && (
+              <button
+                onClick={logout}
+                className="w-full py-3 px-4 bg-white hover:bg-slate-100 text-slate-700 font-bold rounded-2xl border-2 border-slate-200 text-sm transition flex items-center justify-center gap-2"
+              >
+                <LogOut size={16} /> Keluar dari Akun
+              </button>
+            )}
           </div>
         </div>
       </div>

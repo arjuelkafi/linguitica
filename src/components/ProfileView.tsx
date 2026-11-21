@@ -17,10 +17,10 @@ import {
 import { LinguiMascot } from './LinguiMascot';
 import { getUserLevelInfo } from '../utils/gameLogic';
 
-export const ProfileView: React.FC = () => {
-  const { user, stats, achievements, updateProfile } = useAuth();
+export const ProfileView: React.FC<{ onOpenLogin?: () => void }> = ({ onOpenLogin }) => {
+  const { user, isLoggedIn, stats, achievements, updateProfile } = useAuth();
   const [isEditing, setIsEditing] = useState(false);
-  const [editName, setEditName] = useState(user?.name || 'Budi');
+  const [editName, setEditName] = useState(user?.name || 'Pelajar');
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -90,7 +90,7 @@ export const ProfileView: React.FC = () => {
             ) : (
               <div className="flex items-center justify-center sm:justify-start gap-2">
                 <h2 className="text-2xl font-black text-slate-900">
-                  {user?.name || 'Pengguna Linguitica'}
+                  {user?.name || 'Pelajar Linguitica'}
                 </h2>
                 <button
                   onClick={() => {
@@ -105,22 +105,22 @@ export const ProfileView: React.FC = () => {
               </div>
             )}
             <p className="text-xs text-slate-400 font-semibold">
-              @{user?.username || 'learner'} • Bergabung pada 2026
+              @{user?.username || 'pelajar'}
             </p>
 
             <div className="mt-2.5 flex flex-wrap items-center justify-center sm:justify-start gap-2">
               <span className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg bg-sky-50 border border-sky-200 text-[#1CB0F6]">
                 {user?.role === 'teacher' ? 'Guru / Admin Kelas' : 'Murid'}
               </span>
-              <span
-                className={`text-[11px] font-extrabold px-2.5 py-1 rounded-lg border ${
-                  user?.isCloudSynced
-                    ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                    : 'bg-slate-50 border-slate-200 text-slate-600'
-                }`}
-              >
-                {user?.isCloudSynced ? 'Tersinkron Cloud' : 'Penyimpanan Lokal'}
-              </span>
+              {!isLoggedIn && onOpenLogin && (
+                <button
+                  type="button"
+                  onClick={onOpenLogin}
+                  className="text-[11px] font-extrabold px-2.5 py-1 rounded-lg bg-[#58CC02] hover:bg-[#61E002] text-white transition"
+                >
+                  Masuk Akun
+                </button>
+              )}
             </div>
 
             {/* Level progression bar */}

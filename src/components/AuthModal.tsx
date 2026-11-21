@@ -2,18 +2,20 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { UserRole } from '../types';
 import { LinguiMascot } from './LinguiMascot';
-import { ArrowRight, GraduationCap, Sparkles, UserCheck, Cloud, X } from 'lucide-react';
+import { ArrowRight, GraduationCap, UserCheck, LogIn, X } from 'lucide-react';
 
 interface NameLoginCardProps {
   onSuccess?: () => void;
   onClose?: () => void;
   isModal?: boolean;
+  subtitle?: string;
 }
 
 export const NameLoginCard: React.FC<NameLoginCardProps> = ({
   onSuccess,
   onClose,
   isModal = false,
+  subtitle,
 }) => {
   const { loginWithName, loginWithGoogle, pendingJoinCode } = useAuth();
   const [name, setName] = useState('');
@@ -58,17 +60,6 @@ export const NameLoginCard: React.FC<NameLoginCardProps> = ({
     }
   };
 
-  const handleDemoLogin = async () => {
-    setError('');
-    setIsSubmitting(true);
-    try {
-      await loginWithName('Budi Pembelajar', 'student');
-      onSuccess?.();
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   return (
     <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 border-2 border-slate-200 shadow-lg relative">
       {isModal && onClose && (
@@ -88,13 +79,13 @@ export const NameLoginCard: React.FC<NameLoginCardProps> = ({
           Masuk ke Linguitica
         </h2>
         <p className="text-sm text-slate-500 mt-1">
-          Masukkan namamu untuk menyimpan progres belajar bahasa Inggris.
+          {subtitle || 'Masuk untuk menyimpan progres dan mengikuti kelas.'}
         </p>
       </div>
 
       {pendingJoinCode && (
         <div className="mb-4 p-3 bg-sky-50 border-2 border-sky-200 text-sky-800 text-xs rounded-2xl font-bold text-center">
-          Masuk dengan namamu untuk bergabung ke kelas {pendingJoinCode}.
+          Masuk terlebih dahulu untuk bergabung ke kelas {pendingJoinCode}.
         </div>
       )}
 
@@ -168,31 +159,19 @@ export const NameLoginCard: React.FC<NameLoginCardProps> = ({
 
       <div className="my-4 flex items-center gap-2 text-slate-400 text-[11px] font-bold uppercase">
         <div className="flex-1 h-px bg-slate-200" />
-        <span>Pilihan Lainnya</span>
+        <span>Atau</span>
         <div className="flex-1 h-px bg-slate-200" />
       </div>
 
-      <div className="space-y-2.5">
-        <button
-          type="button"
-          onClick={handleGoogleLogin}
-          disabled={isSubmitting}
-          className="w-full py-3 px-4 bg-white hover:bg-slate-50 text-slate-800 font-extrabold rounded-2xl border-2 border-slate-200 border-b-4 active:translate-y-0.5 transition flex items-center justify-center gap-2 text-xs disabled:opacity-60"
-        >
-          <Cloud size={16} className="text-[#1CB0F6]" />
-          <span>Masuk dengan Google (Sync Cloud)</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={handleDemoLogin}
-          disabled={isSubmitting}
-          className="w-full py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold rounded-2xl border-2 border-slate-200 active:translate-y-0.5 transition flex items-center justify-center gap-2 text-xs disabled:opacity-60"
-        >
-          <Sparkles size={15} className="text-[#FF9600]" />
-          <span>Masuk Akun Demo (Budi)</span>
-        </button>
-      </div>
+      <button
+        type="button"
+        onClick={handleGoogleLogin}
+        disabled={isSubmitting}
+        className="w-full py-3 px-4 bg-white hover:bg-slate-50 text-slate-800 font-extrabold rounded-2xl border-2 border-slate-200 border-b-4 active:translate-y-0.5 transition flex items-center justify-center gap-2 text-xs disabled:opacity-60"
+      >
+        <LogIn size={16} className="text-[#1CB0F6]" />
+        <span>Masuk dengan Google</span>
+      </button>
     </div>
   );
 };

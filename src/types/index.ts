@@ -64,7 +64,7 @@ export interface UserProfile {
   role: UserRole;
   avatar: string;
   isCloudSynced?: boolean;
-  authProvider?: 'name' | 'google';
+  authProvider?: 'guest' | 'name' | 'google';
   createdAt: string;
 }
 

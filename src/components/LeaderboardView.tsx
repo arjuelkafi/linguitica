@@ -129,10 +129,6 @@ export const LeaderboardView: React.FC = () => {
           );
         })}
       </div>
-
-      <div className="mt-6 text-center text-xs text-slate-400">
-        Peringkat diperbarui secara berkala berdasarkan aktivitas belajar lokal Anda.
-      </div>
     </div>
   );
 };

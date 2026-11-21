@@ -16,7 +16,7 @@ import { LeaderboardView } from './components/LeaderboardView';
 import { ProfileView } from './components/ProfileView';
 import { SettingsView } from './components/SettingsView';
 import { LessonEngine } from './components/LessonEngine';
-import { AuthModal, NameLoginCard } from './components/AuthModal';
+import { AuthModal } from './components/AuthModal';
 
 import {
   Home,
@@ -70,6 +70,7 @@ const EnglishFlagIcon: React.FC = () => (
 export default function App() {
   const {
     user,
+    isLoggedIn,
     stats,
     settings,
     pendingJoinCode,
@@ -83,12 +84,12 @@ export default function App() {
   const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
   const [showHeartsPopover, setShowHeartsPopover] = useState<boolean>(false);
 
-  // Automatically route to Classroom view when an invite code is waiting after login
+  // Automatically route to Classroom view when an invite code is present in URL
   useEffect(() => {
-    if (user && pendingJoinCode) {
+    if (pendingJoinCode) {
       setActiveTab('classroom');
     }
-  }, [user, pendingJoinCode]);
+  }, [pendingJoinCode]);
 
   const formatTimer = (totalSec: number) => {
     const mins = Math.floor(totalSec / 60);
@@ -266,26 +267,6 @@ export default function App() {
     </div>
   );
 
-  // Welcome / Name-Only Login Gate when not signed in
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 sm:p-6 text-slate-900">
-        <div className="mb-6 flex items-center gap-2.5">
-          <LinguiMascot mood="cheering" size={44} />
-          <span className="text-3xl font-black tracking-tight text-[#58CC02]">
-            linguitica
-          </span>
-        </div>
-
-        <NameLoginCard />
-
-        <p className="text-xs text-slate-500 mt-5 text-center max-w-sm">
-          Platform belajar bahasa Inggris interaktif untuk murid dan guru kelas.
-        </p>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-white flex flex-col md:flex-row text-slate-900 font-sans">
       {/* Desktop Left Sidebar (Duolingo Web style) */}
@@ -328,28 +309,48 @@ export default function App() {
 
         {/* User Card */}
         <div className="p-3 bg-white rounded-2xl border-2 border-slate-200">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-sky-100 border-2 border-sky-300 flex items-center justify-center font-black text-sky-700 text-sm uppercase shrink-0">
-              {user.name.charAt(0)}
+          {isLoggedIn && user ? (
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-sky-100 border-2 border-sky-300 flex items-center justify-center font-black text-sky-700 text-sm uppercase shrink-0">
+                {user.name.charAt(0)}
+              </div>
+              <div className="truncate flex-1">
+                <p className="text-xs font-extrabold text-slate-800 truncate">
+                  {user.name}
+                </p>
+                <p className="text-[11px] text-slate-400 truncate">
+                  {user.role === 'teacher' ? 'Guru / Admin' : 'Murid'} • @{user.username}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAuthModal(true)}
+                aria-label="Ganti akun"
+                title="Ganti akun"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+              >
+                <LogIn size={15} />
+              </button>
             </div>
-            <div className="truncate flex-1">
-              <p className="text-xs font-extrabold text-slate-800 truncate">
-                {user.name}
-              </p>
-              <p className="text-[11px] text-slate-400 truncate">
-                {user.role === 'teacher' ? 'Guru / Admin' : 'Murid'} • @{user.username}
-              </p>
+          ) : (
+            <div className="flex items-center justify-between gap-2">
+              <div className="truncate">
+                <p className="text-xs font-extrabold text-slate-800 truncate">
+                  {user?.name || 'Pelajar'}
+                </p>
+                <p className="text-[11px] text-slate-400 truncate">
+                  Belum masuk akun
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAuthModal(true)}
+                className="px-3 py-1.5 rounded-xl bg-[#58CC02] hover:bg-[#61E002] text-white font-extrabold text-xs shrink-0 transition"
+              >
+                Masuk
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => setShowAuthModal(true)}
-              aria-label="Ganti akun"
-              title="Ganti akun"
-              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
-            >
-              <LogIn size={15} />
-            </button>
-          </div>
+          )}
         </div>
       </aside>
 
@@ -413,7 +414,9 @@ export default function App() {
             {activeTab === 'analytics' && <AnalyticsView />}
             {activeTab === 'classroom' && <ClassroomView />}
             {activeTab === 'leaderboard' && <LeaderboardView />}
-            {activeTab === 'profile' && <ProfileView />}
+            {activeTab === 'profile' && (
+              <ProfileView onOpenLogin={() => setShowAuthModal(true)} />
+            )}
             {activeTab === 'settings' && <SettingsView />}
           </div>
 

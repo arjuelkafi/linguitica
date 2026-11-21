@@ -4,7 +4,6 @@ import { Classroom, ClassroomMember, JoinedClassroom } from '../types';
 import {
   createClassroomRecord,
   deleteTeacherClassroom,
-  isFirebaseAuthActive,
   joinClassroomByCode,
   leaveStudentClassroom,
   listClassroomMembers,
@@ -17,6 +16,7 @@ import {
   normalizeClassCode,
   parseJoinCodeFromUrl,
 } from '../utils/gameLogic';
+import { NameLoginCard } from './AuthModal';
 import {
   GraduationCap,
   Plus,
@@ -33,18 +33,26 @@ import {
   Target,
   BookOpen,
   Shield,
-  Cloud,
 } from 'lucide-react';
+
+function formatClassroomError(err: unknown, fallback: string): string {
+  if (err instanceof Error) {
+    const msg = err.message.trim();
+    if (!msg.startsWith('{')) {
+      return msg;
+    }
+  }
+  return fallback;
+}
 
 export const ClassroomView: React.FC = () => {
   const {
     user,
+    isLoggedIn,
     authReady,
     stats,
     pendingJoinCode,
     clearPendingJoinCode,
-    loginWithGoogle,
-    cloudErrorNotice,
   } = useAuth();
 
   const [subTab, setSubTab] = useState<'join' | 'manage'>(
@@ -67,28 +75,24 @@ export const ClassroomView: React.FC = () => {
   const [teacherMessage, setTeacherMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [isLoadingMembers, setIsLoadingMembers] = useState(false);
-  const [isConnectingCloud, setIsConnectingCloud] = useState(false);
-  const [cloudConnectError, setCloudConnectError] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [confirmDeleteCode, setConfirmDeleteCode] = useState<string | null>(null);
 
-  const cloudActive = isFirebaseAuthActive();
-
   const loadJoinedClasses = useCallback(async () => {
-    if (!user || !authReady) return;
+    if (!user || !isLoggedIn || !authReady) return;
     try {
       const list = await listStudentJoinedClasses(user.id);
       setJoinedClasses(list);
     } catch (err) {
       setJoinMessage({
         type: 'err',
-        text: err instanceof Error ? err.message : 'Gagal memuat daftar kelas yang diikuti.',
+        text: formatClassroomError(err, 'Gagal memuat daftar kelas yang diikuti.'),
       });
     }
-  }, [user, authReady]);
+  }, [user, isLoggedIn, authReady]);
 
   const loadOwnedClasses = useCallback(async () => {
-    if (!user || !authReady) return;
+    if (!user || !isLoggedIn || !authReady) return;
     try {
       const list = await listTeacherClassrooms(user.id);
       setOwnedClasses(list);
@@ -101,14 +105,14 @@ export const ClassroomView: React.FC = () => {
     } catch (err) {
       setTeacherMessage({
         type: 'err',
-        text: err instanceof Error ? err.message : 'Gagal memuat daftar kelas milik Anda.',
+        text: formatClassroomError(err, 'Gagal memuat daftar kelas milik Anda.'),
       });
     }
-  }, [user, authReady, selectedClassCode]);
+  }, [user, isLoggedIn, authReady, selectedClassCode]);
 
   const loadMembersForClass = useCallback(
     async (code: string) => {
-      if (!user || !authReady || !code) {
+      if (!user || !isLoggedIn || !authReady || !code) {
         setMembers([]);
         return;
       }
@@ -120,17 +124,17 @@ export const ClassroomView: React.FC = () => {
         setMembers([]);
         setTeacherMessage({
           type: 'err',
-          text: err instanceof Error ? err.message : 'Gagal memuat daftar murid kelas.',
+          text: formatClassroomError(err, 'Gagal memuat daftar murid kelas.'),
         });
       } finally {
         setIsLoadingMembers(false);
       }
     },
-    [user, authReady]
+    [user, isLoggedIn, authReady]
   );
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !isLoggedIn) return;
     if (pendingJoinCode) {
       setSubTab('join');
     } else if (user.role === 'teacher') {
@@ -138,23 +142,23 @@ export const ClassroomView: React.FC = () => {
     } else {
       setSubTab('join');
     }
-  }, [user?.id, user?.role, pendingJoinCode]);
+  }, [user?.id, user?.role, isLoggedIn, pendingJoinCode]);
 
   useEffect(() => {
-    if (!authReady) return;
+    if (!authReady || !isLoggedIn) return;
     loadJoinedClasses();
     loadOwnedClasses();
-  }, [authReady, user?.id, user?.isCloudSynced, loadJoinedClasses, loadOwnedClasses]);
+  }, [authReady, isLoggedIn, user?.id, user?.isCloudSynced, loadJoinedClasses, loadOwnedClasses]);
 
   useEffect(() => {
-    if (authReady && selectedClassCode && subTab === 'manage') {
+    if (authReady && isLoggedIn && selectedClassCode && subTab === 'manage') {
       loadMembersForClass(selectedClassCode);
     }
-  }, [authReady, selectedClassCode, subTab, user?.isCloudSynced, loadMembersForClass]);
+  }, [authReady, isLoggedIn, selectedClassCode, subTab, user?.isCloudSynced, loadMembersForClass]);
 
   const executeJoin = useCallback(
     async (rawInput: string) => {
-      if (!user || !authReady) return;
+      if (!user || !isLoggedIn || !authReady) return;
       const trimmed = rawInput.trim();
       if (!trimmed) {
         setJoinMessage({ type: 'err', text: 'Masukkan kode kelas atau link undangan.' });
@@ -189,24 +193,24 @@ export const ClassroomView: React.FC = () => {
       } catch (err) {
         setJoinMessage({
           type: 'err',
-          text: err instanceof Error ? err.message : 'Gagal bergabung ke kelas.',
+          text: formatClassroomError(err, 'Gagal bergabung ke kelas. Periksa kode kelas lalu coba lagi.'),
         });
       } finally {
         setIsJoining(false);
       }
     },
-    [user, authReady, stats, loadJoinedClasses]
+    [user, isLoggedIn, authReady, stats, loadJoinedClasses]
   );
 
-  // Auto-join ONLY after Firebase Auth has finished initializing
+  // Auto-join ONLY after user logs in and Firebase Auth finishes initializing
   useEffect(() => {
-    if (authReady && user && pendingJoinCode) {
+    if (authReady && isLoggedIn && user && pendingJoinCode) {
       const code = pendingJoinCode;
       clearPendingJoinCode();
       setSubTab('join');
       executeJoin(code);
     }
-  }, [authReady, user, pendingJoinCode, clearPendingJoinCode, executeJoin]);
+  }, [authReady, isLoggedIn, user, pendingJoinCode, clearPendingJoinCode, executeJoin]);
 
   const handleJoinSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -215,16 +219,14 @@ export const ClassroomView: React.FC = () => {
 
   const handleCreateClass = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) return;
+    if (!user || !isLoggedIn) return;
     setTeacherMessage(null);
     setIsCreating(true);
     try {
       const created = await createClassroomRecord(user, className, classCode, classDesc);
       setTeacherMessage({
         type: 'ok',
-        text: cloudActive
-          ? `Kelas ${created.name} berhasil dibuat di Cloud dengan kode ${created.code}.`
-          : `Kelas ${created.name} dibuat di perangkat ini dengan kode ${created.code}.`,
+        text: `Kelas ${created.name} berhasil dibuat dengan kode ${created.code}.`,
       });
       setClassName('');
       setClassDesc('');
@@ -234,24 +236,10 @@ export const ClassroomView: React.FC = () => {
     } catch (err) {
       setTeacherMessage({
         type: 'err',
-        text: err instanceof Error ? err.message : 'Gagal membuat kelas.',
+        text: formatClassroomError(err, 'Gagal membuat kelas. Silakan coba lagi.'),
       });
     } finally {
       setIsCreating(false);
-    }
-  };
-
-  const handleConnectGoogleCloud = async () => {
-    setCloudConnectError(null);
-    setIsConnectingCloud(true);
-    try {
-      await loginWithGoogle(user?.role || 'student');
-    } catch (err) {
-      setCloudConnectError(
-        err instanceof Error ? err.message : 'Gagal menghubungkan akun Google.'
-      );
-    } finally {
-      setIsConnectingCloud(false);
     }
   };
 
@@ -326,54 +314,35 @@ export const ClassroomView: React.FC = () => {
       ? Math.round(members.reduce((sum, m) => sum + m.accuracyRate, 0) / members.length)
       : 0;
 
-  return (
-    <div className="w-full max-w-3xl mx-auto pb-24">
-      <div className="mb-6">
-        <div className="flex flex-wrap items-center justify-between gap-2">
+  if (!isLoggedIn) {
+    return (
+      <div className="w-full max-w-3xl mx-auto pb-24">
+        <div className="mb-6">
           <h2 className="text-2xl sm:text-3xl font-black text-slate-900">
             Ruang Kelas Linguitica
           </h2>
-          <span
-            className={`text-[11px] font-extrabold px-3 py-1 rounded-xl border-2 ${
-              cloudActive
-                ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                : 'bg-amber-50 border-amber-200 text-amber-800'
-            }`}
-          >
-            {cloudActive ? 'Cloud Room Aktif' : 'Mode Lokal (1 Perangkat)'}
-          </span>
+          <p className="text-sm text-slate-600 mt-1">
+            Buat kelas untuk memantau progres murid, atau bergabung memakai kode dan link undangan.
+          </p>
         </div>
+
+        <div className="flex flex-col items-center">
+          <NameLoginCard subtitle="Masuk terlebih dahulu untuk membuat kelas atau bergabung ke kelas." />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="w-full max-w-3xl mx-auto pb-24">
+      <div className="mb-6">
+        <h2 className="text-2xl sm:text-3xl font-black text-slate-900">
+          Ruang Kelas Linguitica
+        </h2>
         <p className="text-sm text-slate-600 mt-1">
           Buat kelas untuk memantau progres murid, atau bergabung memakai kode dan link undangan.
         </p>
       </div>
-
-      {!cloudActive && (
-        <div className="mb-5 p-4 rounded-2xl bg-amber-50 border-2 border-amber-200 space-y-3">
-          <p className="text-xs font-bold text-amber-900 leading-relaxed">
-            {cloudErrorNotice ||
-              'Untuk berbagi kelas dan link undangan ke HP atau browser lain di Vercel, aktifkan sinkronisasi Cloud dengan akun Google (atau aktifkan Anonymous Sign-In di Firebase Console).'}
-          </p>
-          {cloudConnectError && (
-            <p className="text-xs font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-xl p-2.5">
-              {cloudConnectError}
-            </p>
-          )}
-          <button
-            type="button"
-            onClick={handleConnectGoogleCloud}
-            disabled={isConnectingCloud}
-            className="px-4 py-2.5 rounded-xl bg-white border-2 border-amber-300 hover:border-[#1CB0F6] text-slate-800 font-extrabold text-xs inline-flex items-center gap-2 transition disabled:opacity-60"
-          >
-            <Cloud size={15} className="text-[#1CB0F6]" />
-            <span>
-              {isConnectingCloud
-                ? 'Menghubungkan...'
-                : 'Aktifkan Cloud Room (Masuk dengan Google)'}
-            </span>
-          </button>
-        </div>
-      )}
 
       {/* Mode Switcher */}
       <div className="grid grid-cols-2 gap-3 mb-6">
@@ -478,7 +447,7 @@ export const ClassroomView: React.FC = () => {
                         </h4>
                       </div>
                       <p className="text-xs text-slate-500 font-semibold mt-1">
-                        Pengajar: {cls.teacherName} • Progres tersinkron: {stats.xp} XP, {stats.completedLessons.length} pelajaran
+                        Pengajar: {cls.teacherName}
                       </p>
                     </div>
 

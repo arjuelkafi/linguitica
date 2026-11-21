@@ -34,6 +34,7 @@ import {
 
 interface AuthContextType {
   user: UserProfile | null;
+  isLoggedIn: boolean;
   authReady: boolean;
   stats: UserStats;
   settings: UserSettings;
@@ -59,7 +60,6 @@ interface AuthContextType {
   refillHeartsWithCoins: () => boolean;
   resetProgress: () => void;
   secondsUntilNextHeart: number;
-  cloudErrorNotice: string | null;
 }
 
 const STORAGE_KEYS = {
@@ -142,6 +142,17 @@ function createDemoStats(): UserStats {
   };
 }
 
+const DEFAULT_GUEST_USER: UserProfile = {
+  id: 'guest_learner',
+  name: 'Pelajar',
+  username: 'pelajar',
+  role: 'student',
+  avatar: 'globe',
+  isCloudSynced: false,
+  authProvider: 'guest',
+  createdAt: new Date().toISOString(),
+};
+
 const DEFAULT_DEMO_USER: UserProfile = {
   id: 'user_demo_budi',
   name: 'Budi Pembelajar',
@@ -213,11 +224,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const saved = localStorage.getItem(STORAGE_KEYS.USER);
       if (saved) return JSON.parse(saved);
       if (isAutostart) return DEFAULT_DEMO_USER;
-      return null;
+      return DEFAULT_GUEST_USER;
     } catch {
-      return null;
+      return DEFAULT_GUEST_USER;
     }
   });
+  const isLoggedIn = Boolean(user && user.authProvider !== 'guest');
 
   const [stats, setStats] = useState<UserStats>(() => {
     try {
@@ -250,7 +262,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const [authReady, setAuthReady] = useState<boolean>(false);
   const [secondsUntilNextHeart, setSecondsUntilNextHeart] = useState<number>(0);
-  const [cloudErrorNotice, setCloudErrorNotice] = useState<string | null>(null);
   const isManualAuthInProgressRef = useRef<boolean>(false);
 
   const clearPendingJoinCode = useCallback(() => {
@@ -286,10 +297,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               ...prev,
               ...cloudData.statsPartial,
             }));
-            setCloudErrorNotice(null);
           } else {
             setUser((prev) =>
-              prev
+              prev && prev.authProvider !== 'guest'
                 ? {
                     ...prev,
                     id: fbUser.uid,
@@ -307,7 +317,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     createdAt: new Date().toISOString(),
                   }
             );
-            setCloudErrorNotice(null);
           }
         } catch {
           // Ignore initial fetch errors cleanly
@@ -322,10 +331,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     soundService.setEnabled(settings.soundEnabled);
   }, [settings.soundEnabled]);
 
-  // Persist user & stats by name key + active storage
+  // Persist logged-in user & stats by name key + active storage
   useEffect(() => {
     try {
-      if (user) {
+      if (user && user.authProvider !== 'guest') {
         localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(user));
         const slug = getNameSlug(user.name);
         const rawProfiles = localStorage.getItem(STORAGE_KEYS.NAME_PROFILES);
@@ -423,8 +432,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     const isDemoBudi = slug === 'budipembelajar' && !restoredStats;
+    const hasGuestProgress =
+      user?.authProvider === 'guest' && (stats.xp > 0 || stats.completedLessons.length > 0);
     const nextStats = restoredStats
       ? safeParseStats(JSON.stringify(restoredStats))
+      : hasGuestProgress
+      ? stats
       : isDemoBudi
       ? createDemoStats()
       : createDefaultStats();
@@ -434,23 +447,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     isManualAuthInProgressRef.current = true;
     try {
-      // Attempt silent Firebase Anonymous Auth so Name-only users get real Cloud Firestore persistence
       try {
         if (!auth.currentUser) {
           const cred = await signInAnonymously(auth);
           nextUid = cred.user.uid;
           cloudSynced = true;
-          setCloudErrorNotice(null);
         } else {
           nextUid = auth.currentUser.uid;
           cloudSynced = true;
-          setCloudErrorNotice(null);
         }
       } catch {
         cloudSynced = false;
-        setCloudErrorNotice(
-          'Mode lokal aktif. Aktifkan Anonymous Sign-In di Firebase Console atau masuk dengan Google untuk sinkronisasi antar perangkat.'
-        );
       }
 
       const nextUser: UserProfile = {
@@ -489,7 +496,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       let finalStats =
         stats.xp > 0 || stats.completedLessons.length > 0 ? stats : createDefaultStats();
-      let finalRole = user?.role || role;
+      let finalRole = user?.authProvider !== 'guest' && user?.role ? user.role : role;
 
       try {
         const cloudData = await fetchUserFromCloud(fbUser.uid);
@@ -517,17 +524,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         createdAt: user?.createdAt || new Date().toISOString(),
       };
 
-      setCloudErrorNotice(null);
       setUser(nextUser);
       setStats(finalStats);
       await syncCloudSafe(nextUser, finalStats);
     } catch (err) {
       const code = (err as { code?: string })?.code || '';
       if (code === 'auth/unauthorized-domain') {
-        const host = typeof window !== 'undefined' ? window.location.hostname : 'domain ini';
-        throw new Error(
-          `Domain ${host} belum terdaftar di Firebase Authentication Authorized Domains. Tambahkan domain tersebut di Firebase Console terlebih dahulu.`
-        );
+        throw new Error('Login Google belum tersedia di alamat ini. Gunakan masuk dengan nama.');
       }
       if (code === 'auth/popup-blocked') {
         throw new Error('Popup login diblokir oleh browser. Izinkan popup lalu coba lagi.');
@@ -549,7 +552,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch {
       // ignore signOut error
     }
-    setUser(null);
+    setUser(DEFAULT_GUEST_USER);
     localStorage.removeItem(STORAGE_KEYS.USER);
   };
 
@@ -773,6 +776,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     <AuthContext.Provider
       value={{
         user,
+        isLoggedIn,
         authReady,
         stats,
         settings,
@@ -793,7 +797,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         refillHeartsWithCoins,
         resetProgress,
         secondsUntilNextHeart,
-        cloudErrorNotice,
       }}
     >
       {children}
